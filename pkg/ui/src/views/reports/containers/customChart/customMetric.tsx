@@ -16,7 +16,7 @@ import * as protos from  "src/js/protos";
 import { AxisUnits } from "src/views/shared/components/metricQuery";
 import Dropdown, { DropdownOption } from "src/views/shared/components/dropdown";
 
-import { MetricOption } from "./metricOption";
+import { MetricOption, MetricsSelect } from "./metricsSelect";
 
 import TimeSeriesQueryAggregator = protos.cockroach.ts.tspb.TimeSeriesQueryAggregator;
 import TimeSeriesQueryDerivative = protos.cockroach.ts.tspb.TimeSeriesQueryDerivative;
@@ -61,7 +61,7 @@ export class CustomChartState {
 }
 
 interface CustomMetricRowProps {
-  metricOptions: DropdownOption[];
+  metricOptions: MetricOption[];
   nodeOptions: DropdownOption[];
   index: number;
   rowState: CustomMetricState;
@@ -74,9 +74,9 @@ export class CustomMetricRow extends React.Component<CustomMetricRowProps> {
     this.props.onChange(this.props.index, _.assign(this.props.rowState, newState));
   }
 
-  changeMetric = (selectedOption: DropdownOption) => {
+  changeMetric = (value: string) => {
     this.changeState({
-      metric: selectedOption.value,
+      metric: value,
     });
   }
 
@@ -125,16 +125,10 @@ export class CustomMetricRow extends React.Component<CustomMetricRowProps> {
       <tr>
         <td>
           <div className="metric-table-dropdown">
-            <Select
-              className="metric-table-dropdown__select"
-              clearable={true}
-              resetValue=""
-              searchable={true}
-              value={metric}
+            <MetricsSelect
               options={metricOptions}
               onChange={this.changeMetric}
-              placeholder="Select a metric..."
-              optionComponent={MetricOption}
+              value={metric}
             />
           </div>
         </td>
@@ -198,7 +192,7 @@ export class CustomMetricRow extends React.Component<CustomMetricRowProps> {
 }
 
 interface CustomChartTableProps {
-  metricOptions: DropdownOption[];
+  metricOptions: MetricOption[];
   nodeOptions: DropdownOption[];
   index: number;
   chartState: CustomChartState;

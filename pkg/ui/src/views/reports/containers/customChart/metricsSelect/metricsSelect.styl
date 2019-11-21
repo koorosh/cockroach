@@ -1,0 +1,59 @@
+// Copyright 2019 The Cockroach Authors.
+//
+// Use of this software is governed by the Business Source License
+// included in the file licenses/BSL.txt.
+//
+// As of the Change Date specified in that file, in accordance with
+// the Business Source License, use of this software will be governed
+// by the Apache License, Version 2.0, included in the file
+// licenses/APL.txt.
+
+@require "~styl/base/palette.styl"
+
+.metric-select
+  position relative
+
+.metric-select__input
+  min-width 200px
+  max-width 250px
+  width 100%
+
+.metric-select__input > .ant-select-selection
+  padding-left 24px
+
+.metric-select--search-icon
+  position absolute
+  color #bfbfbf
+  font-size 16px
+  z-index 1
+  left 12px
+  top 12px
+
+.metric-select__dropdown-menu
+  max-width 530px
+  margin 16px
+
+.metric-select__dropdown-menu .ant-select-dropdown-menu-item
+  .metric-select__option-label
+    color #394455
+
+  .metric-select__description
+    color #7e89a9
+
+.metric-select__dropdown-menu .ant-select-dropdown-menu-item-selected
+  .metric-select__option-label
+    color $main-blue-color
+
+  .metric-select__description
+    color $main-blue-color
+    font-weight normal
+
+.metric-select__option
+  padding 6px
+
+.metric-select__option-label
+  font-size 14px
+
+.metric-select__description
+  font-size 12px
+  line-height 12px
