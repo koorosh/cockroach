@@ -28,6 +28,7 @@ import { PageConfig, PageConfigItem } from "src/views/shared/components/pageconf
 import { MetricsMetadata, metricsMetadataSelector } from "src/redux/metricMetadata";
 import { INodeStatus } from "src/util/proto";
 
+import { MetricOption } from "./metricsSelect";
 import { CustomChartState, CustomChartTable } from "./customMetric";
 import "./customChart.styl";
 
@@ -70,7 +71,7 @@ class CustomChart extends React.Component<CustomChartProps & WithRouterProps> {
   private metricOptions = createSelector(
     (summary: NodesSummary) => summary.nodeStatuses,
     (_summary: NodesSummary, metricsMetadata: MetricsMetadata) => metricsMetadata,
-    (nodeStatuses, metadata = {}): DropdownOption[] => {
+    (nodeStatuses, metadata = {}): MetricOption[] => {
       if (_.isEmpty(nodeStatuses)) {
         return [];
       }
