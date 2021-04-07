@@ -61,7 +61,7 @@ export interface NoConnection {
   to: Identity;
 }
 
-type NetworkProps = NetworkOwnProps & RouteComponentProps;
+export type NetworkProps = NetworkOwnProps & RouteComponentProps;
 
 export interface NetworkFilter {
   [key: string]: Array<string>;

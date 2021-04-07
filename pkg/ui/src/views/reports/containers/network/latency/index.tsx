@@ -126,6 +126,15 @@ const renderMultipleHeaders = (
     const row: any[] = [];
     displayIdentities.forEach((identityB) => {
       const a = nodesSummary.nodeStatusByID[identityA.nodeID].activity;
+      // network activity record might not contain "latency" field.
+      // See: pkg/server/status/recorder.go L401 (getNetworkActivity method)
+      if (!a[identityB.nodeID] || !a[identityB.nodeID]?.latency) {
+        // Adding following object is hacky way to fake empty cell in latency matrix. "row" renders cells
+        // in matrix and it is position sensitive, so skipping one element will shift all right hand elements
+        // on one cell left.
+        row.push({ latency: 0, identityB });
+        return;
+      }
       const nano = FixLong(a[identityB.nodeID].latency);
       if (identityA.nodeID === identityB.nodeID) {
         row.push({ latency: 0, identityB });
