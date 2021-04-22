@@ -13,5 +13,7 @@ yarn-error.log
 .cache-loader
 dist*/**
 !distccl/distccl.go
+!distccl/BUILD.bazel
 !distoss/distoss.go
+!distoss/BUILD.bazel
 *manifest.json

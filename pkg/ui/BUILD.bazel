@@ -10,6 +10,19 @@ go_library(
         "//pkg/build",
         "//pkg/util/log",
         "@com_github_cockroachdb_errors//:errors",
-        "@com_github_elazarl_go_bindata_assetfs//:go-bindata-assetfs",
     ],
+)
+
+filegroup(
+    name = "node_modules",
+    srcs = glob(
+        include = [
+            "node_modules/**",
+        ],
+        exclude = [
+            "node_modules/db-console",
+            "node_modules/@cockroachlabs/cluster-ui",
+        ],
+    ),
+    visibility = ["//pkg/ui:__subpackages__"],
 )

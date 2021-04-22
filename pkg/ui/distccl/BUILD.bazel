@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//extras:bindata.bzl", "bindata")
+
+bindata(
+    name = "bindata",
+    srcs = ["//pkg/ui/workspaces/db-console:db_console_webpack"],
+    package = "distccl",
+    extra_args = [
+        "-prefix=pkg/ui/distccl",
+    ],
+)
+
+go_library(
+    name = "distccl",
+    srcs = [
+        "distccl.go",
+        ":bindata",
+    ],
+    deps = [
+        "//pkg/ui",
+        "//pkg/base",
+        "//pkg/build",
+        "//pkg/util/log",
+        "@com_github_cockroachdb_errors//:errors",
+        "@com_github_elazarl_go_bindata_assetfs//:go-bindata-assetfs",
+    ],
+    importpath = "github.com/cockroachdb/cockroach/pkg/ui/distccl",
+    visibility = ["//visibility:public"],
+)

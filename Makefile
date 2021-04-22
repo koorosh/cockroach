@@ -1393,6 +1393,14 @@ pkg/ui/dist%/bindata.go: pkg/ui/workspaces/db-console/webpack.app.js $(CLUSTER_U
 	gofmt -s -w $@
 	goimports -w $@
 
+
+.PHONY: aaaa
+aaaa:
+	go-bindata -pkg dist$* -o pkg/ui/distccl/bindata.go -prefix pkg/ui/distccl pkg/ui/distccl/...
+	echo 'func init() { ui.Asset = Asset; ui.AssetDir = AssetDir; ui.AssetInfo = AssetInfo }' >> pkg/ui/distccl/bindata.go
+	gofmt -s -w pkg/ui/distccl/bindata.go
+	goimports -w pkg/ui/distccl/bindata.go
+
 pkg/ui/yarn.opt.installed:
 	$(NODE_RUN) -C pkg/ui yarn install --check-files
 	touch $@
@@ -1415,7 +1423,7 @@ ui-watch ui-watch-secure: $(UI_CCL_DLLS) pkg/ui/yarn.opt.installed
 
 .PHONY: ui-clean
 ui-clean: ## Remove build artifacts.
-	find pkg/ui/workspaces/db-console/dist* -mindepth 1 -not -name dist*.go -delete
+	find pkg/ui/dist* -mindepth 1 -not -name BUILD.bazel -not -name dist*.go -delete
 	rm -f $(UI_PROTOS_CCL) $(UI_PROTOS_OSS)
 	rm -f pkg/ui/workspaces/db-console/*manifest.json
 	rm -rf pkg/ui/workspaces/cluster-ui/dist
