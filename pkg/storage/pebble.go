@@ -961,7 +961,7 @@ func (p *Pebble) Attrs() roachpb.Attributes {
 
 // Capacity implements the Engine interface.
 func (p *Pebble) Capacity() (roachpb.StoreCapacity, error) {
-	return computeCapacity(p.path, p.maxSize)
+	return computeCapacity(p.fs, p.db.Metrics(), p.path, p.maxSize, p.auxDir)
 }
 
 // Flush implements the Engine interface.
