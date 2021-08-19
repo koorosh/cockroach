@@ -51,7 +51,7 @@ module.exports = (env, argv) => {
     entry: [path.resolve(__dirname, "./src/index.tsx")],
     output: {
       filename: "bundle.js",
-      path: path.resolve(env.output || `../../dist${env.dist}`),
+      path: path.resolve(env.output || `../../dist${env.dist}`, "assets"),
     },
 
     mode: argv.mode || "production",
@@ -185,7 +185,7 @@ module.exports = (env, argv) => {
       new CopyWebpackPlugin([
         { from: path.resolve(__dirname, "favicon.ico"), to: "favicon.ico" },
       ]),
-      // new VisualizerPlugin({ filename: `../dist/stats.${env.dist}.html` }),
+      // new VisualizerPlugin({ filename: `../../dist/stats.${env.dist}.html` }),
       // use WebpackBar instead of webpack dashboard to fit multiple webpack dev server outputs (db-console and cluster-ui)
       new WebpackBar({
         name: "db-console",

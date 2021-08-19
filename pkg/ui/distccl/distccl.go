@@ -10,10 +10,16 @@
 // Cockroach binary.
 package distccl
 
-import "github.com/cockroachdb/cockroach/pkg/ui"
+import (
+	"embed"
+
+	"github.com/cockroachdb/cockroach/pkg/ui"
+)
+
+//go:embed assets
+var assets embed.FS
 
 func init() {
-	ui.Asset = Asset
-	ui.AssetDir = AssetDir
-	ui.AssetInfo = AssetInfo
+	ui.Assets = assets
+	ui.HaveUI = true
 }
