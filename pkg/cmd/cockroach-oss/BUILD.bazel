@@ -7,8 +7,7 @@ go_library(
     visibility = ["//visibility:private"],
     deps = [
         "//pkg/cli",
-        "//pkg/ui/distoss",  # keep
-        "@com_github_cockroachdb_cockroach//pkg/ui/distoss:go_default_library",
+        "//pkg/ui/distoss",
     ],
 )
 

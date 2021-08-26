@@ -8,10 +8,10 @@ genrule(
 )
 
 go_library(
-    name = "distccl",
-    srcs = ["distccl.go"],
+    name = "distoss",
+    srcs = ["distoss.go"],
     embedsrcs = ["assets"], # keep
-    importpath = "github.com/cockroachdb/cockroach/pkg/ui/distccl",
+    importpath = "github.com/cockroachdb/cockroach/pkg/ui/distoss",
     visibility = ["//visibility:public"],
     deps = ["//pkg/ui"],
 )
