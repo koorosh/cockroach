@@ -15,7 +15,11 @@ const webpack = require("webpack");
 
 const pkg = require("./package.json");
 
-const prodDependencies = Object.keys(pkg.dependencies);
+// exclude "@cockroachlabs/cluster-ui" package from vendor bundle because it is frequently changing code base
+// and should be rebuilt on every change as well.
+const prodDependencies = Object.keys(pkg.dependencies).filter(
+  dep => dep !== "@cockroachlabs/cluster-ui",
+);
 
 // tslint:disable:object-literal-sort-keys
 module.exports = (env, argv) => {

@@ -9,7 +9,7 @@
   "main": "dist/js/main.js",
   "types": "dist/types/index.d.ts",
   "scripts": {
-    "build": "npm-run-all build:typescript build:bundle",
+    "build": "npm-run-all build:typescript \"build:bundle {1}\" --",
     "build:bundle": "NODE_ENV=production webpack --display-error-details --mode=production",
     "build:typescript": "tsc",
     "build:watch": "webpack --watch --mode=development",
