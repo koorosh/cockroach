@@ -52,12 +52,11 @@ module.exports = (env, argv) => {
     new RemoveBrokenDependenciesPlugin(),
     new CopyWebpackPlugin([
       { from: path.resolve(__dirname, "favicon.ico"), to: "favicon.ico" },
-    ]),
-    new CopyWebpackPlugin([
       {
         from: path.resolve(
-          __dirname,
-          "../../node_modules/list.js/dist/list.min.js",
+          !isBazelBuild ? __dirname : "",
+          !isBazelBuild ? "../.." : "",
+          "node_modules/list.js/dist/list.min.js",
         ),
         to: path.resolve(__dirname, "../../dist_vendor/list.min.js"),
       },
