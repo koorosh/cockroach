@@ -1126,6 +1126,72 @@ func TestHotRanges2Response(t *testing.T) {
 	}
 }
 
+func benchmarkHotRangesV2Api(b *testing.B, nodes, ranges int) {
+	testCluster := serverutils.StartNewTestCluster(b, nodes, base.TestClusterArgs{})
+	defer testCluster.Stopper().Stop(context.Background())
+
+	rangesPerTable := 100
+	tables := ranges / rangesPerTable
+
+	firstServer := testCluster.Server(0)
+	sqlDB := sqlutils.MakeSQLRunner(testCluster.ServerConn(0))
+
+	sqlDB.Exec(b, `CREATE DATABASE roachblog`)
+	now := timeutil.Now()
+	for i := 0; i < tables; i++ {
+		sqlDB.Exec(
+			b,
+			fmt.Sprintf(`CREATE TABLE roachblog.t%d (id INT DEFAULT unique_rowid(), ts timestamp)`, i),
+		)
+		sqlDB.Exec(
+			b,
+			fmt.Sprintf(`CREATE UNIQUE INDEX "primary" ON roachblog.t%d(ts)`, i),
+		)
+		splits := make([]string, rangesPerTable, rangesPerTable)
+		for idx, _ := range splits {
+			splits[idx] = fmt.Sprintf("('%s')", now.Add(time.Duration(idx)*time.Second).Format("2006-01-02 15:04:05"))
+		}
+		values := strings.Join(splits, ",")
+
+		sqlDB.Exec(
+			b,
+			fmt.Sprintf(`ALTER INDEX roachblog.t%d@primary SPLIT AT VALUES %s`, i, values),
+		)
+		sqlDB.Exec(
+			b,
+			fmt.Sprintf(`INSERT INTO roachblog.t%d (ts) VALUES %s`, i, values),
+		)
+	}
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		var resp serverpb.HotRangesResponseV2
+		if err := postStatusJSONProto(firstServer, "v2/hotranges", &serverpb.HotRangesRequest{}, &resp); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.StopTimer()
+}
+
+func BenchmarkStatusServer_HotRangesV2Api__3n_100r(b *testing.B) {
+	benchmarkHotRangesV2Api(b, 3, 100)
+}
+
+func BenchmarkStatusServer_HotRangesV2Api__3n_1000r(b *testing.B) {
+	benchmarkHotRangesV2Api(b, 3, 1000)
+}
+
+func BenchmarkStatusServer_HotRangesV2Api__3n_10000r(b *testing.B) {
+	benchmarkHotRangesV2Api(b, 3, 10000)
+}
+
+func BenchmarkStatusServer_HotRangesV2Api__3n_100000r(b *testing.B) {
+	benchmarkHotRangesV2Api(b, 3, 100000)
+}
+
+func BenchmarkStatusServer_HotRangesV2Api__3n_1000000r(b *testing.B) {
+	benchmarkHotRangesV2Api(b, 3, 1000000)
+}
+
 func TestRangesResponse(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
