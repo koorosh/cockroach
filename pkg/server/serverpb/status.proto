@@ -1873,6 +1873,14 @@ service Status {
     };
   }
 
+  rpc HotRangesV2WithPagination(HotRangesRequest) returns (HotRangesResponseV2) {
+    option (google.api.http) = {
+      post : "/_status/v2/hotrangespagination"
+      body : "*"
+    };
+  }
+
+
   rpc Range(RangeRequest) returns (RangeResponse) {
     option (google.api.http) = {
       get : "/_status/range/{range_id}"
