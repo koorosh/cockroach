@@ -1883,3 +1883,5 @@ $(foreach v,$(filter-out $(strip $(VALID_VARS)),$(.VARIABLES)),\
 .PHONY: db-console-e2e-test
 db-console-e2e-test: pkg/ui/yarn.opt.installed
 	cd pkg/ui/workspaces/db-console && yarn cypress:run
+
+#
