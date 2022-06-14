@@ -818,6 +818,10 @@ func NewServer(cfg Config, stopper *stop.Stopper) (*Server, error) {
 	drain := newDrainServer(cfg.BaseConfig, stopper, grpcServer, sqlServer)
 	drain.setNode(node, nodeLiveness)
 
+	clusterVersionMetrics := clusterversion.MakeMetrics()
+	registry.AddMetricStruct(clusterVersionMetrics)
+	clusterversion.RegisterOnVersionChangeCallback(&st.SV)
+
 	*lateBoundServer = Server{
 		nodeIDContainer:        nodeIDContainer,
 		cfg:                    cfg,

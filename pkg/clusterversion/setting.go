@@ -16,7 +16,9 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
+	"github.com/cockroachdb/cockroach/pkg/util/metric"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
+	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
 )
 
@@ -267,4 +269,29 @@ func registerPreserveDowngradeVersionSetting() *settings.StringSetting {
 	s.SetReportable(true)
 	s.SetVisibility(settings.Public)
 	return s
+}
+
+var metaPreserveDowngradeLastUpdated = metric.Metadata{
+	Name:        "cluster.preserve.downgrade.option.last-updated",
+	Help:        "Unix timestamp of last updated time for cluster.preserve_downgrade_option",
+	Measurement: "Timestamp",
+	Unit:        metric.Unit_TIMESTAMP_SEC,
+}
+
+var preserveDowngradeLastUpdatedMetric = metric.NewGauge(metaPreserveDowngradeLastUpdated)
+
+func RegisterOnVersionChangeCallback(sv *settings.Values) {
+	preserveDowngradeVersion.SetOnChange(sv, func(ctx context.Context) {
+		preserveDowngradeLastUpdatedMetric.Update(timeutil.Now().Unix())
+	})
+}
+
+type Metrics struct {
+	PreserveDowngradeLastUpdated *metric.Gauge
+}
+
+func MakeMetrics() Metrics {
+	return Metrics{
+		PreserveDowngradeLastUpdated: preserveDowngradeLastUpdatedMetric,
+	}
 }
