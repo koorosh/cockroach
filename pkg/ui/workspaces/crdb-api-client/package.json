@@ -1,6 +1,6 @@
 {
-  "name": "@cockroachlabs/crdb-api-client",
-  "version": "1.0.0",
+  "name": "crdb-api-client",
+  "version": "1.0.6",
   "main": "index.ts",
   "devDependencies": {
     "@bufbuild/protoc-gen-es": "^1.7.2",

@@ -11,12 +11,15 @@ on:
   push:
     branches:
       - master
+      - build-crdb-api-client-publish-workflow-test
 
 jobs:
   publish_crdb_api_client:
-    if: github.repository == 'cockroachdb/cockroach'
-    environment: ${{ github.ref_name == 'master' && 'master' || null }}
+    if: github.repository == 'koorosh/cockroach'
+#    environment: ${{ github.ref_name == 'master' && 'master' || null }}
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
 
     steps:
     - uses: actions/checkout@v4
@@ -62,7 +65,7 @@ jobs:
         else
           echo "modified=false" >> $GITHUB_OUTPUT
         fi
-        PUBLISHED_VERSION=$(npm view @cockroachlabs/crdb-api-client version);
+        PUBLISHED_VERSION=$(npm view crdb-api-client version);
         PACKAGE_VERSION=$(cat ./package.json | jq -r ".version");
         echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT;
         if [[ $PUBLISHED_VERSION == $PACKAGE_VERSION ]]; then
@@ -70,17 +73,37 @@ jobs:
         else
           echo "same_version=false" >> $GITHUB_OUTPUT
         fi
+        # Check if PR to increment package version already exists. 
+        prs=$(gh pr list \
+          --repo "${{ github.repository }}" \
+          --head 'crdb-api-client-increment-version' \
+          --base 'master' \
+          --author 'cockroach-teamcity' \
+          --json title \
+          --jq 'length')
+        if ((prs > 0)); then
+          echo "has_pr=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "has_pr=false" >> "$GITHUB_OUTPUT"
+        fi
+        echo $GITHUB_OUTPUT
 
     - name: Increment version
-      if: steps.check-changes.outputs.modified == 'true' && steps.check-changes.outputs.same_version == 'true'
+      if: |
+        steps.check-changes.outputs.modified == 'true' 
+          && steps.check-changes.outputs.same_version == 'true' 
+          && steps.check-changes.outputs.has_pr == 'false'
       working-directory: pkg/ui/workspaces/crdb-api-client
       run: npm version patch
 
     - name: Create PR to increment package version
-      if: steps.check-changes.outputs.modified == 'true' && steps.check-changes.outputs.same_version == 'true'
+      if: |
+        steps.check-changes.outputs.modified == 'true' 
+          && steps.check-changes.outputs.same_version == 'true' 
+          && steps.check-changes.outputs.has_pr == 'false'
       uses: peter-evans/create-pull-request@v5
       with:
-        base: master
+        base: build-crdb-api-client-publish-workflow-test
         token: ${{ secrets.GH_TOKEN_PR }}
         push-to-fork: "cockroach-teamcity/cockroach"
         add-paths: pkg/ui/workspaces/crdb-api-client/package.json
