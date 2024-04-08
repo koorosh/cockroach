@@ -99,9 +99,10 @@ jobs:
           Release note: None
           Release justification: non-production code changes
         commit-message: |
-          ui: Increment crdb-api-client version to {{ steps.check-changes.outputs.package_version }}
+          ui: Increment crdb-api-client version to ${{ steps.check-changes.outputs.package_version }}
           
-          Update pkg/ui/workspaces/crdb-api-client/package.json file with incremented patch version.
+          Update pkg/ui/workspaces/crdb-api-client/package.json 
+          file with incremented patch version.
           
           Epic: None
           Release note: None
