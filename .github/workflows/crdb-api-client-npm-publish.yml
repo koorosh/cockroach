@@ -84,7 +84,7 @@ jobs:
       if: steps.check-changes.outputs.modified == 'true' && steps.check-changes.outputs.same_version == 'true'
       uses: peter-evans/create-pull-request@v5
       with:
-        base: master
+        base: build-crdb-api-client-publish-workflow-test
 #        token: ${{ secrets.MACHINE_USER_PAT }} # ???
 #        push-to-fork: koorosh/cockroach        # ???
         add-paths: pkg/ui/workspaces/crdb-api-client/package.json
