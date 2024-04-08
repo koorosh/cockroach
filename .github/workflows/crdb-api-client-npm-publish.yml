@@ -11,6 +11,7 @@ on:
   push:
     branches:
       - master
+      - build-crdb-api-client-publish-workflow-test
 
 jobs:
   publish_crdb_api_client:
