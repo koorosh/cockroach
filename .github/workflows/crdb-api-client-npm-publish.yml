@@ -44,7 +44,9 @@ jobs:
         NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     - name: Build crdb-api-client package
-      run: ./dev ui crdb-api-client
+      run: |
+        ./dev doctor --interactive=false --no-cache
+        ./dev ui crdb-api-client
 
     - name: Check for changes
       id: check-changes
