@@ -1939,6 +1939,7 @@ message JobStatusRequest {
   int64 job_id = 1;
   string test = 2;
   string test1 = 3;
+  string test2 = 4;
 }
 
 message JobStatusResponse {
