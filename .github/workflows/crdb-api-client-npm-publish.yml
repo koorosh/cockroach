@@ -65,9 +65,13 @@ jobs:
         PUBLISHED_VERSION=$(npm view crdb-api-client version);
         PACKAGE_VERSION=$(cat ./package.json | jq -r ".version");
         echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT;
+        echo $PUBLISHED_VERSION
+        echo $PACKAGE_VERSION
         if [[ $PUBLISHED_VERSION == $PACKAGE_VERSION ]]; then
+          echo "aaa"
           echo "same_version=true" >> $GITHUB_OUTPUT
         else
+          echo "bbb"
           echo "same_version=false" >> $GITHUB_OUTPUT
         fi
 
