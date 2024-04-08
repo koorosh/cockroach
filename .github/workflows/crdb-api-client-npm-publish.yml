@@ -14,7 +14,7 @@ on:
 
 jobs:
   publish_crdb_api_client:
-    if: github.repository == 'cockroachdb/cockroach'
+    if: github.repository == 'koorosh/cockroach'
     runs-on: ubuntu-latest
 
     steps:
@@ -56,7 +56,7 @@ jobs:
         else
           echo "modified=false" >> $GITHUB_OUTPUT
         fi
-        PUBLISHED_VERSION=$(npm view @cockroachlabs/crdb-api-client version);
+        PUBLISHED_VERSION=$(npm view crdb-api-client version);
         PACKAGE_VERSION=$(cat ./package.json | jq -r ".version");
         echo "package_version=$PACKAGE_VERSION" >> $GITHUB_OUTPUT;
         if [[ $PUBLISHED_VERSION == $PACKAGE_VERSION ]]; then
@@ -75,6 +75,8 @@ jobs:
       uses: peter-evans/create-pull-request@v5
       with:
         base: master
+#        token: ${{ secrets.MACHINE_USER_PAT }} # ???
+#        push-to-fork: koorosh/cockroach        # ???
         add-paths: pkg/ui/workspaces/crdb-api-client/package.json
         branch: 'crdb-api-client-increment-version'
         title: "ui: Increment @cockroachlabs/crdb-api-client version"
