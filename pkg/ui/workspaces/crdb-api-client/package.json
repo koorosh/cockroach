@@ -1,5 +1,5 @@
 {
-  "name": "@cockroachlabs/crdb-api-client",
+  "name": "crdb-api-client",
   "version": "1.0.0",
   "main": "index.ts",
   "devDependencies": {
