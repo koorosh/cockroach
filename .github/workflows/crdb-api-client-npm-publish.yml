@@ -112,4 +112,4 @@ jobs:
     - name: Publish package
       if: steps.check-changes.outputs.modified == 'true' && steps.check-changes.outputs.same_version == 'false'
       working-directory: pkg/ui/workspaces/crdb-api-client
-      run: npm publish --access public --tag next --ignore-scripts
+      run: npm publish --access public --tag next --tag latest --ignore-scripts
