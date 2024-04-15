@@ -1085,11 +1085,11 @@ var zipSystemTables = DebugZipTableRegistry{
 	"system.descriptor": {
 		customQueryUnredacted: `SELECT
 				id,
-				descriptor
+				crdb_internal.decode_descriptor(descriptor) AS descriptor,
 			FROM system.descriptor`,
 		customQueryRedacted: `SELECT
 				id,
-				crdb_internal.redact_descriptor(descriptor) AS descriptor
+				crdb_internal.decode_descriptor(crdb_internal.redact_descriptor(descriptor)) AS descriptor
 			FROM system.descriptor`,
 	},
 	"system.eventlog": {

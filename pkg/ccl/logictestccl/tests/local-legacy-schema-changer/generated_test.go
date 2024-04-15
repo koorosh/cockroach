@@ -204,6 +204,13 @@ func TestCCLLogic_redact_descriptor(
 	runCCLLogicTest(t, "redact_descriptor")
 }
 
+func TestCCLLogic_decode_descriptor(
+	t *testing.T,
+) {
+	defer leaktest.AfterTest(t)()
+	runCCLLogicTest(t, "decode_descriptor")
+}
+
 func TestCCLLogic_refcursor(
 	t *testing.T,
 ) {

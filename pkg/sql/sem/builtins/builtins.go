@@ -73,6 +73,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sqltelemetry"
 	"github.com/cockroachdb/cockroach/pkg/sql/syntheticprivilege"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
+	"github.com/cockroachdb/cockroach/pkg/storage"
 	"github.com/cockroachdb/cockroach/pkg/util/bitarray"
 	"github.com/cockroachdb/cockroach/pkg/util/duration"
 	"github.com/cockroachdb/cockroach/pkg/util/encoding"
@@ -5343,6 +5344,30 @@ DO NOT USE -- USE 'CREATE VIRTUAL CLUSTER' INSTEAD`,
 				return tree.NewDBytes(tree.DBytes(ret)), nil
 			},
 			Info:       "This function is used to redact expressions in descriptors",
+			Volatility: volatility.Stable,
+		},
+	),
+	"crdb_internal.decode_descriptor": makeBuiltin(
+		tree.FunctionProperties{
+			Category:         builtinconstants.CategorySystemInfo,
+			DistsqlBlocklist: true,
+			Undocumented:     true,
+		},
+		tree.Overload{
+			Types:      tree.ParamTypes{{Name: "descriptor", Typ: types.Bytes}},
+			ReturnType: tree.FixedReturnType(types.String),
+			Fn: func(ctx context.Context, evalCtx *eval.Context, args tree.Datums) (tree.Datum, error) {
+				s, ok := tree.AsDBytes(args[0])
+				if !ok {
+					return nil, errors.Newf("expected bytes value, got %T", args[0])
+				}
+				k, err := storage.DecodeMVCCKey(s.UnsafeBytes())
+				if err != nil {
+					return nil, err
+				}
+				return tree.NewDString(k.String()), nil
+			},
+			Info:       "This function is used to decode descriptors key",
 			Volatility: volatility.Stable,
 		},
 	),

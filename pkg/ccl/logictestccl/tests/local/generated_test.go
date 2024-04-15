@@ -288,11 +288,11 @@ func TestCCLLogic_read_committed(
 	runCCLLogicTest(t, "read_committed")
 }
 
-func TestCCLLogic_redact_descriptor(
+func TestCCLLogic_decode_descriptor(
 	t *testing.T,
 ) {
 	defer leaktest.AfterTest(t)()
-	runCCLLogicTest(t, "redact_descriptor")
+	runCCLLogicTest(t, "decode_descriptor")
 }
 
 func TestCCLLogic_refcursor(
