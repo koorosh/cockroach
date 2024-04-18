@@ -1,6 +1,6 @@
 {
   "name": "crdb-api-client",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "main": "index.ts",
   "devDependencies": {
     "@bufbuild/protoc-gen-es": "^1.7.2",
