@@ -551,9 +551,7 @@ func TestBackupRestoreAppend(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
-	skip.UnderStress(t, "test is too large to run under stress")
-	skip.UnderDeadlock(t, "test is too large to run under deadlock")
-	skip.UnderRace(t, "test is too large to run under race")
+	skip.UnderDuress(t, "test is very large")
 
 	const numAccounts = 1000
 	ctx := context.Background()
@@ -627,18 +625,16 @@ func TestBackupRestoreAppend(t *testing.T) {
 		sqlDB.ExpectErr(t, "A full backup cannot be written to \"/subdir\", a user defined subdirectory",
 			"BACKUP INTO $4 IN ($1, $2, $3) AS OF SYSTEM TIME "+tsBefore, append(test.collectionsWithSubdir, specifiedSubdir)...)
 
-		sqlDB.RunWithRetriableTxn(t, func(txn *gosql.Tx) error {
-			return txn.QueryRow("UPDATE data.bank SET balance = 100 RETURNING cluster_logical_timestamp()").Scan(&ts1)
-		})
+		sqlDB.Exec(t, "UPDATE data.bank SET balance = 100")
+		sqlDB.QueryRow(t, "SELECT cluster_logical_timestamp()").Scan(&ts1)
 		sqlDB.Exec(t, "BACKUP INTO LATEST IN ($1, $2, $3) AS OF SYSTEM TIME "+ts1, test.collections...)
 
 		// Append to latest again, just to prove we can append to an appended one and
 		// that appended didn't e.g. mess up LATEST.
 		sqlDB.QueryRow(t, "SELECT cluster_logical_timestamp()").Scan(&ts1again)
 		sqlDB.Exec(t, "BACKUP INTO LATEST IN ($1, $2, $3) AS OF SYSTEM TIME "+ts1again, test.collections...)
-		sqlDB.RunWithRetriableTxn(t, func(txn *gosql.Tx) error {
-			return txn.QueryRow("UPDATE data.bank SET balance = 200 RETURNING cluster_logical_timestamp()").Scan(&ts2)
-		})
+		sqlDB.Exec(t, "UPDATE data.bank SET balance = 200")
+		sqlDB.QueryRow(t, "SELECT cluster_logical_timestamp()").Scan(&ts2)
 		rowsTS2 := sqlDB.QueryStr(t, "SELECT * from data.bank ORDER BY id")
 
 		// Start a new full-backup in the collection version.
@@ -732,6 +728,8 @@ func TestBackupRestoreAppend(t *testing.T) {
 func TestBackupAndRestoreJobDescription(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+
+	skip.UnderStressRace(t, "this test is heavyweight and is not expected to reveal any direct bugs under stress race")
 
 	const numAccounts = 1
 	_, sqlDB, tmpDir, cleanupFn := backupRestoreTestSetup(t, multiNode, numAccounts, InitManualReplication)
@@ -1884,7 +1882,7 @@ func TestBackupRestoreResume(t *testing.T) {
 				},
 			},
 			// Required because restore checkpointing is version gated.
-			clusterversion.V23_1.Version(),
+			clusterversion.TODODelete_V23_1.Version(),
 		)
 		// If the restore properly took the (incorrect) low-water mark into account,
 		// the first half of the table will be missing.
@@ -6650,7 +6648,7 @@ INSERT INTO foo.bar VALUES (110), (210), (310), (410), (510)`)
 	systemDB.Exec(t, `SET CLUSTER SETTING kv.bulk_sst.target_size='50b'`)
 	tenant10.Exec(t, `BACKUP DATABASE foo TO 'userfile://defaultdb.myfililes/test2'`)
 	startingSpan = mkSpan(id1, "/Tenant/10/Table/:id/1", "/Tenant/10/Table/:id/2")
-	resumeSpan := mkSpan(id1, "/Tenant/10/Table/:id/1/510/0", "/Tenant/10/Table/:id/2")
+	resumeSpan := mkSpan(id1, "/Tenant/10/Table/:id/1/510", "/Tenant/10/Table/:id/2")
 	mu.Lock()
 	require.Equal(t, []string{startingSpan.String(), resumeSpan.String()}, mu.exportRequestSpans)
 	mu.Unlock()
@@ -6662,10 +6660,10 @@ INSERT INTO foo.bar VALUES (110), (210), (310), (410), (510)`)
 	var expected []string
 	for _, resume := range []exportResumePoint{
 		{mkSpan(id1, "/Tenant/10/Table/:id/1", "/Tenant/10/Table/:id/2"), withoutTS},
-		{mkSpan(id1, "/Tenant/10/Table/:id/1/210/0", "/Tenant/10/Table/:id/2"), withoutTS},
-		{mkSpan(id1, "/Tenant/10/Table/:id/1/310/0", "/Tenant/10/Table/:id/2"), withoutTS},
-		{mkSpan(id1, "/Tenant/10/Table/:id/1/410/0", "/Tenant/10/Table/:id/2"), withoutTS},
-		{mkSpan(id1, "/Tenant/10/Table/:id/1/510/0", "/Tenant/10/Table/:id/2"), withoutTS},
+		{mkSpan(id1, "/Tenant/10/Table/:id/1/210", "/Tenant/10/Table/:id/2"), withoutTS},
+		{mkSpan(id1, "/Tenant/10/Table/:id/1/310", "/Tenant/10/Table/:id/2"), withoutTS},
+		{mkSpan(id1, "/Tenant/10/Table/:id/1/410", "/Tenant/10/Table/:id/2"), withoutTS},
+		{mkSpan(id1, "/Tenant/10/Table/:id/1/510", "/Tenant/10/Table/:id/2"), withoutTS},
 	} {
 		expected = append(expected, requestSpanStr(resume.Span, resume.timestamp))
 	}
@@ -6693,12 +6691,15 @@ INSERT INTO baz.bar VALUES (110, 'a'), (210, 'b'), (310, 'c'), (410, 'd'), (510,
 	for _, resume := range []exportResumePoint{
 		{mkSpan(id2, "/Tenant/10/Table/3", "/Tenant/10/Table/4"), withoutTS},
 		{mkSpan(id2, "/Tenant/10/Table/:id/1", "/Tenant/10/Table/:id/2"), withoutTS},
-		{mkSpan(id2, "/Tenant/10/Table/:id/1/210/0", "/Tenant/10/Table/:id/2"), withoutTS},
-		// We have two entries for 210 because of history and super small table size
+		{mkSpan(id2, "/Tenant/10/Table/:id/1/210", "/Tenant/10/Table/:id/2"), withoutTS},
+		// We have two entries for 210 because of history and super small table
+		// size. Note that the second resume span has start key with the column
+		// family which implies that the previous export request response will not
+		// flush until this span completes.
 		{mkSpan(id2, "/Tenant/10/Table/:id/1/210/0", "/Tenant/10/Table/:id/2"), withTS},
-		{mkSpan(id2, "/Tenant/10/Table/:id/1/310/0", "/Tenant/10/Table/:id/2"), withoutTS},
-		{mkSpan(id2, "/Tenant/10/Table/:id/1/410/0", "/Tenant/10/Table/:id/2"), withoutTS},
-		{mkSpan(id2, "/Tenant/10/Table/:id/1/510/0", "/Tenant/10/Table/:id/2"), withoutTS},
+		{mkSpan(id2, "/Tenant/10/Table/:id/1/310", "/Tenant/10/Table/:id/2"), withoutTS},
+		{mkSpan(id2, "/Tenant/10/Table/:id/1/410", "/Tenant/10/Table/:id/2"), withoutTS},
+		{mkSpan(id2, "/Tenant/10/Table/:id/1/510", "/Tenant/10/Table/:id/2"), withoutTS},
 	} {
 		expected = append(expected, requestSpanStr(resume.Span, resume.timestamp))
 	}
@@ -7194,7 +7195,7 @@ func TestBackupRestoreTenant(t *testing.T) {
 		})
 		restoreDB.Exec(t, `RESTORE TENANT 10 FROM 'nodelocal://1/t10'`)
 		restoreDB.CheckQueryResults(t,
-			`SELECT id, active, name, data_state, service_mode, 
+			`SELECT id, active, name, data_state, service_mode,
 				crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'capabilities',
 				crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'previousSourceTenant'->'clusterId',
 				crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'previousSourceTenant'->'cutoverTimestamp'->'wallTime'
@@ -7239,8 +7240,8 @@ func TestBackupRestoreTenant(t *testing.T) {
 		restoreDB.Exec(t, `ALTER TENANT [10] STOP SERVICE`)
 		restoreDB.Exec(t, `DROP TENANT [10]`)
 		restoreDB.CheckQueryResults(t,
-			`select id, active, name, data_state, 
-				service_mode, crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'capabilities', 
+			`select id, active, name, data_state,
+				service_mode, crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'capabilities',
 				crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'droppedName' from system.tenants`,
 			[][]string{
 				{
@@ -7276,7 +7277,7 @@ func TestBackupRestoreTenant(t *testing.T) {
 
 		restoreDB.Exec(t, `RESTORE TENANT 10 FROM 'nodelocal://1/t10'`)
 		restoreDB.CheckQueryResults(t,
-			`select id, active, name, data_state, service_mode, 
+			`select id, active, name, data_state, service_mode,
 				crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'capabilities'
 			from system.tenants`,
 			[][]string{
@@ -7319,7 +7320,7 @@ func TestBackupRestoreTenant(t *testing.T) {
 		)
 
 		restoreDB.CheckQueryResults(t,
-			`select id, active, name, data_state, service_mode, 
+			`select id, active, name, data_state, service_mode,
 				crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'capabilities'
 			from system.tenants`,
 			[][]string{
@@ -7332,7 +7333,7 @@ func TestBackupRestoreTenant(t *testing.T) {
 			})
 		restoreDB.Exec(t, `RESTORE TENANT 10 FROM 'nodelocal://1/t10'`)
 		restoreDB.CheckQueryResults(t,
-			`select id, active, name, data_state, service_mode, 
+			`select id, active, name, data_state, service_mode,
 				crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'capabilities'
 			from system.tenants`,
 			[][]string{
@@ -7363,8 +7364,8 @@ func TestBackupRestoreTenant(t *testing.T) {
 		restoreDB := sqlutils.MakeSQLRunner(restoreTC.Conns[0])
 
 		restoreDB.CheckQueryResults(t,
-			`select id, active, name, data_state, service_mode, 
-				crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'capabilities' 
+			`select id, active, name, data_state, service_mode,
+				crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'capabilities'
 			from system.tenants`,
 			[][]string{
 				{
@@ -7376,8 +7377,8 @@ func TestBackupRestoreTenant(t *testing.T) {
 			})
 		restoreDB.Exec(t, `RESTORE TENANT 10 FROM 'nodelocal://1/clusterwide'`)
 		restoreDB.CheckQueryResults(t,
-			`select id, active, name, data_state, service_mode, 
-				crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'capabilities' 
+			`select id, active, name, data_state, service_mode,
+				crdb_internal.pb_to_json('cockroach.multitenant.ProtoInfo', info)->'capabilities'
 			from system.tenants`,
 			[][]string{
 				{
@@ -11099,14 +11100,7 @@ $$;
 		udfID, err = strconv.Atoi(rows[0][0])
 		require.NoError(t, err)
 
-		isSystemTenant := tgtCluster.ApplicationLayer(0).Codec().ForSystemTenant()
-
-		// System tenant restores the system.tenant_settings while the secondary
-		// tenant does not.
-		startingDescID := 122
-		if isSystemTenant {
-			startingDescID = 123
-		}
+		const startingDescID = 123
 		err = sql.TestingDescsTxn(ctx, tgtServer, func(ctx context.Context, txn isql.Txn, col *descs.Collection) error {
 			dbDesc, err := col.ByNameWithLeased(txn.KV()).Get().Database(ctx, "db1")
 			require.NoError(t, err)
@@ -11140,14 +11134,9 @@ $$;
 			require.Equal(t, fmt.Sprintf("SELECT a FROM db1.sc1.tbl1;\nSELECT nextval(%d:::REGCLASS);",
 				startingDescID+6), fnDesc.GetFunctionBody())
 
-			expectedOID := 100126
-			dependsOn := []descpb.ID{125, 128}
-			dependsOnTypes := []descpb.ID{126, 127}
-			if isSystemTenant {
-				expectedOID = 100127
-				dependsOn = []descpb.ID{126, 129}
-				dependsOnTypes = []descpb.ID{127, 128}
-			}
+			expectedOID := 100127
+			dependsOn := []descpb.ID{126, 129}
+			dependsOnTypes := []descpb.ID{127, 128}
 			require.Equal(t, expectedOID, int(fnDesc.GetParams()[0].Type.Oid()))
 			require.Equal(t, dependsOn, fnDesc.GetDependsOn())
 			require.Equal(t, dependsOnTypes, fnDesc.GetDependsOnTypes())

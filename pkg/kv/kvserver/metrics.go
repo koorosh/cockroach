@@ -37,6 +37,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/sstable"
+	"github.com/cockroachdb/pebble/vfs"
 )
 
 func init() {
@@ -940,6 +941,14 @@ bytes preserved during flushes and compactions over the lifetime of the process.
 			"See storage.AggregatedBatchCommitStats for details.",
 		Measurement: "Nanoseconds",
 		Unit:        metric.Unit_NANOSECONDS,
+	}
+	metaSSTableZombieBytes = metric.Metadata{
+		Name: "storage.sstable.zombie.bytes",
+		Help: "Bytes in SSTables that have been logically deleted, " +
+			"but can't yet be physically deleted because an " +
+			"open iterator may be reading them.",
+		Measurement: "Bytes",
+		Unit:        metric.Unit_BYTES,
 	}
 )
 
@@ -2425,11 +2434,25 @@ Note that the measurement does not include the duration for replicating the eval
 		Measurement: "Time",
 		Help:        "Weighted time spent reading from or writing to the store's disk since this process started (as reported by the OS)",
 	}
-	metaIopsInProgress = metric.Metadata{
+	metaDiskIopsInProgress = metric.Metadata{
 		Name:        "storage.disk.iopsinprogress",
 		Unit:        metric.Unit_COUNT,
 		Measurement: "Operations",
 		Help:        "IO operations currently in progress on the store's disk (as reported by the OS)",
+	}
+	// The disk rate metrics are computed using data sampled on the interval,
+	// COCKROACH_DISK_STATS_POLLING_INTERVAL.
+	metaDiskReadMaxBytesPerSecond = metric.Metadata{
+		Name:        "storage.disk.read-max.bytespersecond",
+		Unit:        metric.Unit_BYTES,
+		Measurement: "Bytes",
+		Help:        "Maximum rate at which bytes were read from disk (as reported by the OS)",
+	}
+	metaDiskWriteMaxBytesPerSecond = metric.Metadata{
+		Name:        "storage.disk.write-max.bytespersecond",
+		Unit:        metric.Unit_BYTES,
+		Measurement: "Bytes",
+		Help:        "Maximum rate at which bytes were written to disk (as reported by the OS)",
 	}
 )
 
@@ -2589,7 +2612,9 @@ type StoreMetrics struct {
 	BatchCommitL0StallDuration        *metric.Gauge
 	BatchCommitWALRotWaitDuration     *metric.Gauge
 	BatchCommitCommitWaitDuration     *metric.Gauge
+	SSTableZombieBytes                *metric.Gauge
 	categoryIterMetrics               pebbleCategoryIterMetricsContainer
+	categoryDiskWriteMetrics          pebbleCategoryDiskWriteMetricsContainer
 	WALBytesWritten                   *metric.Gauge
 	WALBytesIn                        *metric.Gauge
 	WALFailoverSwitchCount            *metric.Gauge
@@ -2832,15 +2857,17 @@ type StoreMetrics struct {
 	FsyncLatency     *metric.ManualWindowHistogram
 
 	// Disk metrics
-	DiskReadBytes      *metric.Gauge
-	DiskReadCount      *metric.Gauge
-	DiskReadTime       *metric.Gauge
-	DiskWriteBytes     *metric.Gauge
-	DiskWriteCount     *metric.Gauge
-	DiskWriteTime      *metric.Gauge
-	DiskIOTime         *metric.Gauge
-	DiskWeightedIOTime *metric.Gauge
-	IopsInProgress     *metric.Gauge
+	DiskReadBytes              *metric.Gauge
+	DiskReadCount              *metric.Gauge
+	DiskReadTime               *metric.Gauge
+	DiskWriteBytes             *metric.Gauge
+	DiskWriteCount             *metric.Gauge
+	DiskWriteTime              *metric.Gauge
+	DiskIOTime                 *metric.Gauge
+	DiskWeightedIOTime         *metric.Gauge
+	DiskIopsInProgress         *metric.Gauge
+	DiskReadMaxBytesPerSecond  *metric.Gauge
+	DiskWriteMaxBytesPerSecond *metric.Gauge
 }
 
 type tenantMetricsRef struct {
@@ -3291,7 +3318,11 @@ func newStoreMetrics(histogramWindow time.Duration) *StoreMetrics {
 		BatchCommitL0StallDuration:        metric.NewGauge(metaBatchCommitL0StallDuration),
 		BatchCommitWALRotWaitDuration:     metric.NewGauge(metaBatchCommitWALRotDuration),
 		BatchCommitCommitWaitDuration:     metric.NewGauge(metaBatchCommitCommitWaitDuration),
+		SSTableZombieBytes:                metric.NewGauge(metaSSTableZombieBytes),
 		categoryIterMetrics: pebbleCategoryIterMetricsContainer{
+			registry: storeRegistry,
+		},
+		categoryDiskWriteMetrics: pebbleCategoryDiskWriteMetricsContainer{
 			registry: storeRegistry,
 		},
 		WALBytesWritten:              metric.NewGauge(metaWALBytesWritten),
@@ -3584,15 +3615,17 @@ func newStoreMetrics(histogramWindow time.Duration) *StoreMetrics {
 		ReplicaReadBatchDroppedLatchesBeforeEval: metric.NewCounter(metaReplicaReadBatchDroppedLatchesBeforeEval),
 		ReplicaReadBatchWithoutInterleavingIter:  metric.NewCounter(metaReplicaReadBatchWithoutInterleavingIter),
 
-		DiskReadBytes:      metric.NewGauge(metaDiskReadBytes),
-		DiskReadCount:      metric.NewGauge(metaDiskReadCount),
-		DiskReadTime:       metric.NewGauge(metaDiskReadTime),
-		DiskWriteBytes:     metric.NewGauge(metaDiskWriteBytes),
-		DiskWriteCount:     metric.NewGauge(metaDiskWriteCount),
-		DiskWriteTime:      metric.NewGauge(metaDiskWriteTime),
-		DiskIOTime:         metric.NewGauge(metaDiskIOTime),
-		DiskWeightedIOTime: metric.NewGauge(metaDiskWeightedIOTime),
-		IopsInProgress:     metric.NewGauge(metaIopsInProgress),
+		DiskReadBytes:              metric.NewGauge(metaDiskReadBytes),
+		DiskReadCount:              metric.NewGauge(metaDiskReadCount),
+		DiskReadTime:               metric.NewGauge(metaDiskReadTime),
+		DiskWriteBytes:             metric.NewGauge(metaDiskWriteBytes),
+		DiskWriteCount:             metric.NewGauge(metaDiskWriteCount),
+		DiskWriteTime:              metric.NewGauge(metaDiskWriteTime),
+		DiskIOTime:                 metric.NewGauge(metaDiskIOTime),
+		DiskWeightedIOTime:         metric.NewGauge(metaDiskWeightedIOTime),
+		DiskIopsInProgress:         metric.NewGauge(metaDiskIopsInProgress),
+		DiskReadMaxBytesPerSecond:  metric.NewGauge(metaDiskReadMaxBytesPerSecond),
+		DiskWriteMaxBytesPerSecond: metric.NewGauge(metaDiskWriteMaxBytesPerSecond),
 
 		// Estimated MVCC stats in split.
 		SplitsWithEstimatedStats:     metric.NewCounter(metaSplitEstimatedStats),
@@ -3718,7 +3751,9 @@ func (sm *StoreMetrics) updateEngineMetrics(m storage.Metrics) {
 	sm.BatchCommitL0StallDuration.Update(int64(m.BatchCommitStats.L0ReadAmpWriteStallDuration))
 	sm.BatchCommitWALRotWaitDuration.Update(int64(m.BatchCommitStats.WALRotationDuration))
 	sm.BatchCommitCommitWaitDuration.Update(int64(m.BatchCommitStats.CommitWaitDuration))
+	sm.SSTableZombieBytes.Update(int64(m.Table.ZombieSize))
 	sm.categoryIterMetrics.update(m.CategoryStats)
+	sm.categoryDiskWriteMetrics.update(m.DiskWriteStats)
 
 	for level, stats := range m.Levels {
 		sm.RdbBytesIngested[level].Update(int64(stats.BytesIngested))
@@ -3806,16 +3841,23 @@ func (sm *StoreMetrics) updateEnvStats(stats fs.EnvStats) {
 	sm.EncryptionAlgorithm.Update(int64(stats.EncryptionType))
 }
 
-func (sm *StoreMetrics) updateDiskStats(stats disk.Stats) {
-	sm.DiskReadCount.Update(int64(stats.ReadsCount))
-	sm.DiskReadBytes.Update(int64(stats.BytesRead()))
-	sm.DiskReadTime.Update(int64(stats.ReadsDuration))
-	sm.DiskWriteCount.Update(int64(stats.WritesCount))
-	sm.DiskWriteBytes.Update(int64(stats.BytesWritten()))
-	sm.DiskWriteTime.Update(int64(stats.WritesDuration))
-	sm.DiskIOTime.Update(int64(stats.CumulativeDuration))
-	sm.DiskWeightedIOTime.Update(int64(stats.WeightedIODuration))
-	sm.IopsInProgress.Update(int64(stats.InProgressCount))
+func (sm *StoreMetrics) updateDiskStats(rollingStats disk.StatsWindow) {
+	cumulativeStats := rollingStats.Latest()
+	sm.DiskReadCount.Update(int64(cumulativeStats.ReadsCount))
+	sm.DiskReadBytes.Update(int64(cumulativeStats.BytesRead()))
+	sm.DiskReadTime.Update(int64(cumulativeStats.ReadsDuration))
+	sm.DiskWriteCount.Update(int64(cumulativeStats.WritesCount))
+	sm.DiskWriteBytes.Update(int64(cumulativeStats.BytesWritten()))
+	sm.DiskWriteTime.Update(int64(cumulativeStats.WritesDuration))
+	sm.DiskIOTime.Update(int64(cumulativeStats.CumulativeDuration))
+	sm.DiskWeightedIOTime.Update(int64(cumulativeStats.WeightedIODuration))
+	sm.DiskIopsInProgress.Update(int64(cumulativeStats.InProgressCount))
+	maxRollingStats := rollingStats.Max()
+	// maxRollingStats is computed as the change in stats every 100ms, so we
+	// scale them to represent the change in stats every 1s.
+	perSecondMultiplier := int(time.Second / disk.DefaultDiskStatsPollingInterval)
+	sm.DiskReadMaxBytesPerSecond.Update(int64(maxRollingStats.BytesRead() * perSecondMultiplier))
+	sm.DiskWriteMaxBytesPerSecond.Update(int64(maxRollingStats.BytesWritten() * perSecondMultiplier))
 }
 
 func (sm *StoreMetrics) handleMetricsResult(ctx context.Context, metric result.Metrics) {
@@ -3946,5 +3988,48 @@ func (m *pebbleCategoryIterMetricsContainer) update(stats []sstable.CategoryStat
 		}
 		cm := val.(*pebbleCategoryIterMetrics)
 		cm.update(s.CategoryStats)
+	}
+}
+
+type pebbleCategoryDiskWriteMetrics struct {
+	BytesWritten *metric.Gauge
+}
+
+func makePebbleCategorizedWriteMetrics(
+	category vfs.DiskWriteCategory,
+) *pebbleCategoryDiskWriteMetrics {
+	metaDiskBytesWritten := metric.Metadata{
+		Name:        fmt.Sprintf("storage.category-%s.bytes-written", category),
+		Help:        "Bytes written to disk",
+		Measurement: "Bytes",
+		Unit:        metric.Unit_BYTES,
+	}
+	return &pebbleCategoryDiskWriteMetrics{BytesWritten: metric.NewGauge(metaDiskBytesWritten)}
+}
+
+// MetricStruct implements the metric.Struct interface.
+func (m *pebbleCategoryDiskWriteMetrics) MetricStruct() {}
+
+func (m *pebbleCategoryDiskWriteMetrics) update(stats vfs.DiskWriteStatsAggregate) {
+	m.BytesWritten.Update(int64(stats.BytesWritten))
+}
+
+type pebbleCategoryDiskWriteMetricsContainer struct {
+	registry *metric.Registry
+	// vfs.DiskWriteCategory => *pebbleCategoryDiskWriteMetrics
+	metricsMap sync.Map
+}
+
+func (m *pebbleCategoryDiskWriteMetricsContainer) update(stats []vfs.DiskWriteStatsAggregate) {
+	for _, s := range stats {
+		val, ok := m.metricsMap.Load(s.Category)
+		if !ok {
+			val, ok = m.metricsMap.LoadOrStore(s.Category, makePebbleCategorizedWriteMetrics(s.Category))
+			if !ok {
+				m.registry.AddMetricStruct(val)
+			}
+		}
+		cm := val.(*pebbleCategoryDiskWriteMetrics)
+		cm.update(s)
 	}
 }

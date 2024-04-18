@@ -247,6 +247,7 @@ func makeBackupLocalityMap(
 					return nil, errors.Wrap(err,
 						"creating locality external storage configuration")
 				}
+				conf.URI = uri
 				storesByLocalityKV[kv] = conf
 			}
 		}
@@ -298,7 +299,7 @@ func restore(
 		return emptyRowCount, err
 	}
 
-	on231 := clusterversion.V23_1.Version().LessEq(job.Payload().CreationClusterVersion)
+	on231 := clusterversion.TODODelete_V23_1.Version().LessEq(job.Payload().CreationClusterVersion)
 	restoreCheckpoint := job.Progress().Details.(*jobspb.Progress_Restore).Restore.Checkpoint
 	requiredSpans := dataToRestore.getSpans()
 	progressTracker, err := makeProgressTracker(
@@ -2417,7 +2418,7 @@ func (r *restoreResumer) publishDescriptors(
 			// If the tenant was backed up in the `READY` state then we must activate
 			// the tenant as the final step of the restore. The tenant has already
 			// been created at an earlier stage in the restore in an `ADD` state.
-			if err := sql.ActivateTenant(
+			if err := sql.ActivateRestoredTenant(
 				ctx, r.execCfg.Settings, r.execCfg.Codec, txn, tenant.ID, tenant.ServiceMode,
 			); err != nil {
 				return err

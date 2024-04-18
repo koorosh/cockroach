@@ -25,6 +25,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/test"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/install"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/logger"
+	"github.com/cockroachdb/cockroach/pkg/roachprod/vm"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
 	"github.com/stretchr/testify/require"
@@ -95,7 +96,15 @@ func registerRebalanceLoad(r registry.Registry) {
 
 		if mixedVersion {
 			mvt := mixedversion.NewTest(ctx, t, t.L(), c, roachNodes, mixedversion.NeverUseFixtures,
-				mixedversion.ClusterSettingOption(install.ClusterSettingsOption(settings.ClusterSettings)),
+				mixedversion.ClusterSettingOption(
+					install.ClusterSettingsOption(settings.ClusterSettings),
+					// In 23.1, the `user_id` field was added to `system.web_sessions`.
+					// If the cluster is migrating to 23.1, auth-session login will not
+					// be aware of this new field and authentication will fail.
+					// TODO(DarrylWong): When 22.2 is no longer supported, we won't run
+					// into the above issue anymore and can enable secure clusters.
+					install.SecureOption(false),
+				),
 			)
 			mvt.InMixedVersion("rebalance load run",
 				func(ctx context.Context, l *logger.Logger, r *rand.Rand, h *mixedversion.Helper) error {
@@ -194,12 +203,18 @@ func registerRebalanceLoad(r registry.Registry) {
 			},
 		},
 	)
-	cSpec := r.MakeClusterSpec(7, spec.SSD(2)) // the last node is just used to generate load
+
 	r.Add(
 		registry.TestSpec{
-			Name:             `rebalance/by-load/replicas/ssds=2`,
-			Owner:            registry.OwnerKV,
-			Cluster:          cSpec,
+			Name:  `rebalance/by-load/replicas/ssds=2`,
+			Owner: registry.OwnerKV,
+			Cluster: r.MakeClusterSpec(7,
+				// When using ssd > 1, only local SSDs on AMD64 arch are compatible
+				// currently. See #121951.
+				spec.SSD(2),
+				spec.Arch(vm.ArchAMD64),
+				spec.PreferLocalSSD(),
+			), // the last node is just used to generate load
 			CompatibleClouds: registry.OnlyGCE,
 			Suites:           registry.Suites(registry.Nightly),
 			Leases:           registry.MetamorphicLeases,

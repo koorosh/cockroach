@@ -142,11 +142,13 @@ func (c *TenantStreamingClusters) setupSrcTenant() {
 
 func (c *TenantStreamingClusters) init(ctx context.Context) {
 	c.SrcSysSQL.ExecMultiple(c.T, ConfigureClusterSettings(c.Args.SrcClusterSettings)...)
-	c.SrcSysSQL.Exec(c.T, `ALTER TENANT $1 SET CLUSTER SETTING sql.virtual_cluster.feature_access.multiregion.enabled=true`, c.Args.SrcTenantName)
-	c.SrcSysSQL.Exec(c.T, `ALTER TENANT $1 GRANT CAPABILITY can_use_nodelocal_storage`, c.Args.SrcTenantName)
-	require.NoError(c.T, c.SrcCluster.Server(0).TenantController().WaitForTenantCapabilities(ctx, c.Args.SrcTenantID, map[tenantcapabilities.ID]string{
-		tenantcapabilities.CanUseNodelocalStorage: "true",
-	}, ""))
+	if !c.Args.SrcTenantID.IsSystem() {
+		c.SrcSysSQL.Exec(c.T, `ALTER TENANT $1 SET CLUSTER SETTING sql.virtual_cluster.feature_access.multiregion.enabled=true`, c.Args.SrcTenantName)
+		c.SrcSysSQL.Exec(c.T, `ALTER TENANT $1 GRANT CAPABILITY can_use_nodelocal_storage`, c.Args.SrcTenantName)
+		require.NoError(c.T, c.SrcCluster.Server(0).TenantController().WaitForTenantCapabilities(ctx, c.Args.SrcTenantID, map[tenantcapabilities.ID]string{
+			tenantcapabilities.CanUseNodelocalStorage: "true",
+		}, ""))
+	}
 	if c.Args.SrcInitFunc != nil {
 		c.Args.SrcInitFunc(c.T, c.SrcSysSQL, c.SrcTenantSQL)
 	}
@@ -418,8 +420,15 @@ func CreateMultiTenantStreamingCluster(
 		DestSysServer: cluster.Server(destNodeIdx).SystemLayer(),
 		Rng:           rng,
 	}
-	tsc.setupSrcTenant()
+	if args.SrcTenantID.IsSystem() {
+		tsc.SrcTenantServer = tsc.SrcSysServer
+		tsc.SrcTenantConn = tsc.SrcCluster.ServerConn(0)
+		tsc.SrcTenantSQL = tsc.SrcSysSQL
+	} else {
+		tsc.setupSrcTenant()
+	}
 	tsc.init(ctx)
+
 	return tsc, func() {
 		require.NoError(t, tsc.SrcTenantConn.Close())
 		cleanup()
@@ -507,7 +516,21 @@ func WaitUntilReplicatedTime(
 	t *testing.T, targetTime hlc.Timestamp, db *sqlutils.SQLRunner, ingestionJobID jobspb.JobID,
 ) {
 	testutils.SucceedsSoon(t, func() error {
-		return requireReplicatedTime(targetTime, jobutils.GetJobProgress(t, db, ingestionJobID))
+		err := requireReplicatedTime(targetTime, jobutils.GetJobProgress(t, db, ingestionJobID))
+		if err == nil {
+			return nil
+		}
+		// Check the job status to see if there is still anything to be waiting for.
+		jobStatus := db.QueryStr(t, "SELECT status, error FROM [SHOW JOB $1]", ingestionJobID)
+		if len(jobStatus) > 0 {
+			// Include job status in the error in case it is useful.
+			err = errors.Wrapf(err, "job status %s %s", jobStatus[0][0], jobStatus[0][1])
+			// Don't wait for an advance that is never happening if paused or failed.
+			if jobStatus[0][0] == string(jobs.StatusPaused) || jobStatus[0][0] == string(jobs.StatusFailed) {
+				t.Fatal(err)
+			}
+		}
+		return err
 	})
 }
 

@@ -177,70 +177,25 @@ const (
 
 	VBootstrapMax
 
-	// V23_1 is CockroachDB v23.1. It's used for all v23.1.x patch releases.
-	V23_1
+	// TODODelete_V23_1 is CockroachDB v23.1. It's used for all v23.1.x patch releases.
+	TODODelete_V23_1
 
-	// V23_2Start demarcates the start of cluster versions stepped through during
-	// the process of upgrading from previous supported releases to 23.2.
-	V23_2Start
-
-	// V23_2_EnableRangeCoalescingForSystemTenant enables range coalescing for
-	// the system tenant.
-	V23_2_EnableRangeCoalescingForSystemTenant
-
-	// V23_2_UseACRaftEntryEntryEncodings gates the use of raft entry encodings
-	// that (optionally) embed below-raft admission data.
-	V23_2_UseACRaftEntryEntryEncodings
-
-	// V23_2_PebbleFormatDeleteSizedAndObsolete upgrades Pebble's format major
-	// version to FormatDeleteSizedAndObsolete, allowing use of a new sstable
-	// format version Pebblev4. This version has two improvements:
-	//   a) It allows the use of DELSIZED point tombstones.
-	//   b) It encodes the obsolence of keys in a key-kind bit.
-	V23_2_PebbleFormatDeleteSizedAndObsolete
-
-	// V23_2_UseSizedPebblePointTombstones enables the use of Pebble's new
+	// TODODelete_V23_2_UseSizedPebblePointTombstones enables the use of Pebble's new
 	// DeleteSized operations.
-	V23_2_UseSizedPebblePointTombstones
+	TODODelete_V23_2_UseSizedPebblePointTombstones
 
-	// V23_2_PebbleFormatVirtualSSTables upgrades Pebble's format major version to
-	// FormatVirtualSSTables, allowing use of virtual sstables in Pebble.
-	V23_2_PebbleFormatVirtualSSTables
-
-	// V23_2_StmtDiagForPlanGist enables statement diagnostic feature to collect
+	// TODODelete_V23_2_StmtDiagForPlanGist enables statement diagnostic feature to collect
 	// the bundle for particular plan gist.
-	V23_2_StmtDiagForPlanGist
+	TODODelete_V23_2_StmtDiagForPlanGist
 
-	// V23_2_RegionaLivenessTable guarantees the regional liveness table exists
-	// and its ready for use.
-	V23_2_RegionaLivenessTable
-
-	// V23_2_RemoveLockTableWaiterTouchPush simplifies the push logic in
+	// TODODelete_V23_2_RemoveLockTableWaiterTouchPush simplifies the push logic in
 	// lock_table_waiter by passing the wait policy of the pusher as part of the
 	// push request and leaving the push outcome to the server-side logic.
-	V23_2_RemoveLockTableWaiterTouchPush
+	TODODelete_V23_2_RemoveLockTableWaiterTouchPush
 
-	// V23_2_ChangefeedLaggingRangesOpts is used to version gate the changefeed
+	// TODODelete_V23_2_ChangefeedLaggingRangesOpts is used to version gate the changefeed
 	// options lagging_ranges_threshold and lagging_ranges_polling_interval.
-	V23_2_ChangefeedLaggingRangesOpts
-
-	// V23_2_GrantExecuteToPublic is no longer used. See #114203.
-	V23_2_GrantExecuteToPublic
-
-	// V23_2_EnablePebbleFormatVirtualSSTables enables the Pebble
-	// FormatMajorVersion for virtual sstables. Note that the ratcheting for the
-	// format major version in Pebble should have happened with
-	// V23_2_PebbleFormatVirtualSSTables above.
-	V23_2_EnablePebbleFormatVirtualSSTables
-
-	// V23_2_MVCCStatisticsTable adds the system.mvcc_statistics
-	// table and update job. The table is used to serve fast reads of historical
-	// mvcc data from observability surfaces.
-	V23_2_MVCCStatisticsTable
-
-	// V23_2_AddSystemExecInsightsTable is the version at which Cockroach creates
-	// {statement|transaction}_execution_insights system tables.
-	V23_2_AddSystemExecInsightsTable
+	TODODelete_V23_2_ChangefeedLaggingRangesOpts
 
 	// ***************************************************************************
 	//            WHERE TO ADD VERSION GATES DURING 23.2 STABILITY?
@@ -309,6 +264,10 @@ const (
 	// to be pipelined.
 	V24_1_ReplicatedLockPipelining
 
+	// V24_1_AddSpanCounts is the migration that added the span_counts table to
+	// the system tenant to ensure it is a superset of secondary tenants.
+	V24_1_AddSpanCounts
+
 	numKeys
 )
 
@@ -336,23 +295,13 @@ var versionTable = [numKeys]roachpb.Version{
 	VBootstrapTenant: {Major: 0, Minor: 0, Internal: 4},
 	VBootstrapMax:    {Major: 0, Minor: 0, Internal: 424242},
 
-	V23_1: {Major: 23, Minor: 1, Internal: 0},
+	TODODelete_V23_1: {Major: 23, Minor: 1, Internal: 0},
 
 	// v23.2 versions. Internal versions must be even.
-	V23_2Start: {Major: 23, Minor: 1, Internal: 2},
-	V23_2_EnableRangeCoalescingForSystemTenant: {Major: 23, Minor: 1, Internal: 8},
-	V23_2_UseACRaftEntryEntryEncodings:         {Major: 23, Minor: 1, Internal: 10},
-	V23_2_PebbleFormatDeleteSizedAndObsolete:   {Major: 23, Minor: 1, Internal: 12},
-	V23_2_UseSizedPebblePointTombstones:        {Major: 23, Minor: 1, Internal: 14},
-	V23_2_PebbleFormatVirtualSSTables:          {Major: 23, Minor: 1, Internal: 16},
-	V23_2_StmtDiagForPlanGist:                  {Major: 23, Minor: 1, Internal: 18},
-	V23_2_RegionaLivenessTable:                 {Major: 23, Minor: 1, Internal: 20},
-	V23_2_RemoveLockTableWaiterTouchPush:       {Major: 23, Minor: 1, Internal: 22},
-	V23_2_ChangefeedLaggingRangesOpts:          {Major: 23, Minor: 1, Internal: 24},
-	V23_2_GrantExecuteToPublic:                 {Major: 23, Minor: 1, Internal: 26},
-	V23_2_EnablePebbleFormatVirtualSSTables:    {Major: 23, Minor: 1, Internal: 28},
-	V23_2_MVCCStatisticsTable:                  {Major: 23, Minor: 1, Internal: 30},
-	V23_2_AddSystemExecInsightsTable:           {Major: 23, Minor: 1, Internal: 32},
+	TODODelete_V23_2_UseSizedPebblePointTombstones:  {Major: 23, Minor: 1, Internal: 14},
+	TODODelete_V23_2_StmtDiagForPlanGist:            {Major: 23, Minor: 1, Internal: 18},
+	TODODelete_V23_2_RemoveLockTableWaiterTouchPush: {Major: 23, Minor: 1, Internal: 22},
+	TODODelete_V23_2_ChangefeedLaggingRangesOpts:    {Major: 23, Minor: 1, Internal: 24},
 
 	V23_2: {Major: 23, Minor: 2, Internal: 0},
 
@@ -377,6 +326,7 @@ var versionTable = [numKeys]roachpb.Version{
 	V24_1_GossipMaximumIOOverload:              {Major: 23, Minor: 2, Internal: 20},
 	V24_1_EstimatedMVCCStatsInSplit:            {Major: 23, Minor: 2, Internal: 22},
 	V24_1_ReplicatedLockPipelining:             {Major: 23, Minor: 2, Internal: 24},
+	V24_1_AddSpanCounts:                        {Major: 23, Minor: 2, Internal: 26},
 }
 
 // Latest is always the highest version key. This is the maximum logical cluster
@@ -384,7 +334,7 @@ var versionTable = [numKeys]roachpb.Version{
 const Latest Key = numKeys - 1
 
 // MinSupported is the minimum logical cluster version supported by this branch.
-const MinSupported Key = V23_1
+const MinSupported Key = V23_2
 
 // PreviousRelease is the logical cluster version of the previous release.
 //

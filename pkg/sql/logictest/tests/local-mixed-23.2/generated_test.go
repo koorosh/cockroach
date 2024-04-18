@@ -30,7 +30,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/randutil"
 )
 
-const configIdx = 19
+const configIdx = 18
 
 var logicTestDir string
 
@@ -2183,13 +2183,6 @@ func TestLogic_udf(
 ) {
 	defer leaktest.AfterTest(t)()
 	runLogicTest(t, "udf")
-}
-
-func TestLogic_udf_calling_udf(
-	t *testing.T,
-) {
-	defer leaktest.AfterTest(t)()
-	runLogicTest(t, "udf_calling_udf")
 }
 
 func TestLogic_udf_delete(

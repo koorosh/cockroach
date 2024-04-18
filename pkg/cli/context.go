@@ -33,6 +33,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/storage"
 	"github.com/cockroachdb/cockroach/pkg/ts"
+	"github.com/cockroachdb/cockroach/pkg/util/envutil"
 	"github.com/cockroachdb/cockroach/pkg/util/log/logconfig"
 	"github.com/cockroachdb/cockroach/pkg/util/log/logcrash"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
@@ -90,18 +91,32 @@ func clearFlagChanges(cmd *cobra.Command) {
 //
 // See below for defaults.
 var serverCfg = func() server.Config {
-	st := cluster.MakeClusterSettings()
-	logcrash.SetGlobalSettings(&st.SV)
-
+	st := makeClusterSettings()
 	return server.MakeConfig(context.Background(), st)
 }()
+
+func makeClusterSettings() *cluster.Settings {
+	// Even though the code supports upgrading from multiple previous releases,
+	// skipping versions is experimental; by default, we only allow upgrading from
+	// the previous release.
+	//
+	// Version skipping can be enabled by setting COCKROACH_ALLOW_VERSION_SKIPPING=1.
+	var minSupported clusterversion.Key
+	if envutil.EnvOrDefaultBool("COCKROACH_ALLOW_VERSION_SKIPPING", false) {
+		minSupported = clusterversion.MinSupported
+	} else {
+		minSupported = clusterversion.PreviousRelease
+	}
+	st := cluster.MakeClusterSettingsWithVersions(clusterversion.Latest.Version(), minSupported.Version())
+	logcrash.SetGlobalSettings(&st.SV)
+	return st
+}
 
 // setServerContextDefaults set the default values in serverCfg.  This
 // function is called by initCLIDefaults() and thus re-called in every
 // test that exercises command-line parsing.
 func setServerContextDefaults() {
-	st := cluster.MakeClusterSettings()
-	logcrash.SetGlobalSettings(&st.SV)
+	st := makeClusterSettings()
 	serverCfg.SetDefaults(context.Background(), st)
 
 	serverCfg.TenantKVAddrs = []string{"127.0.0.1:26257"}
@@ -480,6 +495,8 @@ var startCtx struct {
 	serverSSLCertsDir      string
 	serverCertPrincipalMap []string
 	serverListenAddr       string
+	serverRootCertDN       string
+	serverNodeCertDN       string
 
 	// The TLS auto-handshake parameters.
 	initToken             string
@@ -533,6 +550,8 @@ func setStartContextDefaults() {
 	startCtx.serverInsecure = baseCfg.Insecure
 	startCtx.serverSSLCertsDir = base.DefaultCertsDirectory
 	startCtx.serverCertPrincipalMap = nil
+	startCtx.serverRootCertDN = ""
+	startCtx.serverNodeCertDN = ""
 	startCtx.serverListenAddr = ""
 	startCtx.unencryptedLocalhostHTTP = false
 	startCtx.tempDir = ""

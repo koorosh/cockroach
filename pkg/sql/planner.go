@@ -286,6 +286,13 @@ type planner struct {
 	trackDependency map[catid.DescID]bool
 
 	reducedAuditConfig *auditlogging.ReducedAuditConfig
+
+	// This field is embedded into the planner to avoid an allocation in
+	// checkExprForDistSQL.
+	distSQLVisitor distSQLExprCheckVisitor
+	// This field is embedded into the planner to avoid an allocation in
+	// checkScanParallelizationIfLocal.
+	parallelizationChecker localScanParallelizationChecker
 }
 
 // hasFlowForPausablePortal returns true if the planner is for re-executing a

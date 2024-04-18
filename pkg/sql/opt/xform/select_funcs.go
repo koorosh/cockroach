@@ -24,6 +24,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/util/intsets"
+	"github.com/cockroachdb/errors"
 )
 
 // IsLocking returns true if the ScanPrivate is configured to use a row-level
@@ -939,13 +940,112 @@ func (c *CustomFuncs) GenerateInvertedIndexScans(
 	})
 }
 
+// GenerateTrigramSimilarityInvertedIndexScans generates scans on inverted
+// trigram indexes that are constrained by similarity filters (e.g.,
+// `s & % 'foo'`). It is similar conceptually to GenerateInvertedIndexScans, but
+// it produces expression trees optimized specially for similarity filters. The
+// resulting expressions:
+//
+//  1. Have normal constraints instead of inverted constraints.
+//  2. Have distinct-on expressions instead of inverted filter expressions to
+//     de-duplicate tuples in the inverted index that correspond to the same
+//     logical row. This is beneficial because distinct-on expressions can
+//     produce rows before reading all rows from their input.
+//  3. Have index joins to fetch the constrained column value and apply the
+//     original filter. This is always required because the scan constraints
+//     for trigram similarity filters are never tight.
+//
+// For an expression like "s % 'foo'" the produced expression has the form:
+//
+// ` (Select
+// `   (IndexJoin
+// `     (DistinctOn
+// `       (Scan [/' fo' - /' fo'] [/'foo' - /'foo'] [/'oo' - /'oo')
+// `       (GroupingCols pkCols)
+// `      )
+// `   )
+// `   (Filters (s % 'foo'))
+// ` )
+func (c *CustomFuncs) GenerateTrigramSimilarityInvertedIndexScans(
+	grp memo.RelExpr,
+	required *physical.Required,
+	scanPrivate *memo.ScanPrivate,
+	filters memo.FiltersExpr,
+) {
+	if !c.e.evalCtx.SessionData().OptimizerUseTrigramSimilarityOptimization {
+		return
+	}
+
+	// Inverted index scans for trigram similarity filters always require an
+	// index join. So we can exit early if the NoIndexJoin hint is set.
+	if scanPrivate.Flags.NoIndexJoin {
+		return
+	}
+
+	tabMeta := c.e.mem.Metadata().TableMeta(scanPrivate.Table)
+	tabID := scanPrivate.Table
+
+	// Generate implicit filters from constraints and computed columns as
+	// optional filters to help constrain an index scan.
+	optionalFilters := c.checkConstraintFilters(tabID)
+	computedColFilters := c.ComputedColFilters(scanPrivate, filters, optionalFilters)
+	optionalFilters = append(optionalFilters, computedColFilters...)
+
+	var iter scanIndexIter
+	iter.Init(c.e.evalCtx, c.e, c.e.mem, &c.im, scanPrivate, filters, rejectNonInvertedIndexes)
+	iter.ForEach(func(index cat.Index, filters memo.FiltersExpr, indexCols opt.ColSet, _ bool, _ memo.ProjectionsExpr) {
+		// Try to constrain the index.
+		con, remainingFilters, ok := invertedidx.TryFilterInvertedIndexBySimilarity(
+			c.e.evalCtx, c.e.f, filters, optionalFilters,
+			tabID, index, tabMeta.ComputedCols, c.checkCancellation,
+		)
+		if !ok {
+			// A span expression to constrain the inverted index could not be
+			// generated.
+			return
+		}
+
+		// There should always be remaining filters because similarity
+		// constraints are never tight.
+		filters = remainingFilters
+		if filters.IsTrue() {
+			panic(errors.AssertionFailedf("unexpected empty remaining filters"))
+		}
+
+		pkCols := c.PrimaryKeyCols(tabID)
+
+		newScanPrivate := *scanPrivate
+		newScanPrivate.Distribution.Regions = nil
+		newScanPrivate.Index = index.Ordinal()
+		newScanPrivate.SetConstraint(c.e.evalCtx, con)
+		newScanPrivate.Cols = pkCols
+
+		sel := &memo.SelectExpr{
+			Input: c.e.f.ConstructIndexJoin(
+				c.e.f.ConstructDistinctOn(
+					c.e.f.ConstructScan(&newScanPrivate),
+					memo.EmptyAggregationsExpr, &memo.GroupingPrivate{
+						GroupingCols: pkCols,
+					},
+				),
+				&memo.IndexJoinPrivate{
+					Table:   tabID,
+					Cols:    scanPrivate.Cols,
+					Locking: scanPrivate.Locking,
+				}),
+			Filters: filters,
+		}
+		c.e.mem.AddSelectToGroup(sel, grp)
+	})
+}
+
 // tryConstrainIndex tries to derive a constraint for the given index from the
 // specified filter. If a constraint is derived, it is returned along with any
 // filter remaining after extracting the constraint. If no constraint can be
 // derived, then tryConstrainIndex returns ok = false.
 func (c *CustomFuncs) tryConstrainIndex(
 	requiredFilters, optionalFilters memo.FiltersExpr, tabID opt.TableID, indexOrd int,
-) (constraint *constraint.Constraint, remainingFilters memo.FiltersExpr, ok bool) {
+) (_ *constraint.Constraint, remainingFilters memo.FiltersExpr, ok bool) {
 	// Start with fast check to rule out indexes that cannot be constrained.
 	if !c.canMaybeConstrainNonInvertedIndex(requiredFilters, tabID, indexOrd) &&
 		!c.canMaybeConstrainNonInvertedIndex(optionalFilters, tabID, indexOrd) {
@@ -953,17 +1053,12 @@ func (c *CustomFuncs) tryConstrainIndex(
 	}
 
 	ic := c.initIdxConstraintForIndex(requiredFilters, optionalFilters, tabID, indexOrd)
-	constraint = ic.Constraint()
-	if constraint.IsUnconstrained() {
+	var cons constraint.Constraint
+	ic.Constraint(&cons)
+	if cons.IsUnconstrained() {
 		return nil, nil, false
 	}
-
-	// Return 0 if no remaining filter.
-	remaining := ic.RemainingFilters()
-
-	// Make copy of constraint so that idxconstraint instance is not referenced.
-	copy := *constraint
-	return &copy, remaining, true
+	return &cons, ic.RemainingFilters(), true
 }
 
 // canMaybeConstrainNonInvertedIndex returns true if we should try to constrain

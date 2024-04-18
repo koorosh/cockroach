@@ -613,7 +613,7 @@ func registerTPCC(r registry.Registry) {
 				// Increase the vmodule level around transaction pushes so that if we do
 				// see a transaction retry error, we can debug it. This may affect perf,
 				// so we should not use this as a performance test.
-				ExtraStartArgs: []string{"--vmodule=cmd_push_txn=2,queue=2"},
+				ExtraStartArgs: []string{"--vmodule=cmd_push_txn=2,queue=2,transaction=2"},
 			})
 		},
 	})
@@ -633,12 +633,28 @@ func registerTPCC(r registry.Registry) {
 				ExtraRunArgs:    "--wait=false",
 				SetupType:       usingImport,
 				ExpensiveChecks: true,
+				// Increase the vmodule level around transaction pushes so that if we do
+				// see a transaction retry error, we can debug it. This may affect perf,
+				// so we should not use this as a performance test.
+				ExtraStartArgs: []string{"--vmodule=cmd_push_txn=2,queue=2,transaction=2"},
 				WorkloadInstances: func() (ret []workloadInstance) {
 					isoLevels := []string{"read_uncommitted", "read_committed", "repeatable_read", "snapshot", "serializable"}
 					for i, isoLevel := range isoLevels {
 						args := "--isolation-level=" + isoLevel
-						if i <= 1 { // read_uncommitted and read_committed
+						switch isoLevel {
+						case "read_uncommitted", "read_committed":
+							// Disable retries for read uncommitted and read committed. These
+							// isolation levels are weak enough that we don't expect 40001
+							// "serialization_failure" errors which would necessitate a
+							// transaction retry loop. If we do see a 40001 error when running
+							// at one of these isolation levels, fail the test.
 							args += " --txn-retries=false"
+						case "serializable":
+							// Enable durable locking for serializable transactions. This
+							// ensures that we do not run into issues with best-effort locks
+							// acquired by SELECT FOR UPDATE being lost and creating lock
+							// order inversions which lead to transaction deadlocks.
+							args += " --conn-vars=enable_durable_locking_for_serializable=true"
 						}
 						ret = append(ret, workloadInstance{
 							nodes:          c.Range(1, c.Spec().NodeCount-1),

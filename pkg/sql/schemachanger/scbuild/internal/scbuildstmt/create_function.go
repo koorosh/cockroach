@@ -13,6 +13,7 @@ package scbuildstmt
 import (
 	"fmt"
 
+	"github.com/cockroachdb/cockroach/pkg/clusterversion"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/catpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/funcinfo"
@@ -25,6 +26,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sqlerrors"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/errors"
+	"github.com/lib/pq/oid"
 )
 
 func CreateFunction(b BuildCtx, n *tree.CreateRoutine) {
@@ -66,7 +68,7 @@ func CreateFunction(b BuildCtx, n *tree.CreateRoutine) {
 	if n.IsProcedure {
 		if n.ReturnType != nil {
 			returnType := b.ResolveTypeRef(n.ReturnType.Type)
-			if returnType.Type.Family() != types.VoidFamily && !types.IsRecordType(returnType.Type) {
+			if returnType.Type.Family() != types.VoidFamily && returnType.Type.Oid() != oid.T_record {
 				panic(errors.AssertionFailedf(
 					"CreateRoutine.ReturnType is expected to be empty, VOID, or RECORD for procedures",
 				))
@@ -79,7 +81,7 @@ func CreateFunction(b BuildCtx, n *tree.CreateRoutine) {
 		}
 	} else if n.ReturnType != nil {
 		typ = n.ReturnType.Type
-		if returnType := b.ResolveTypeRef(typ); types.IsRecordType(returnType.Type) {
+		if returnType := b.ResolveTypeRef(typ); returnType.Type.Oid() == oid.T_record {
 			// If the function returns a RECORD type, then we need to check
 			// whether its OUT parameters specify labels for the return type.
 			outParamTypes, outParamNames := getOutputParameters(b, n.Params)
@@ -237,6 +239,10 @@ func validateFunctionToFunctionReferences(
 	b BuildCtx, refProvider ReferenceProvider, parentDBID descpb.ID,
 ) {
 	err := refProvider.ForEachFunctionReference(func(id descpb.ID) error {
+		if !b.ClusterSettings().Version.IsActive(b, clusterversion.V24_1) {
+			return pgerror.Newf(pgcode.FeatureNotSupported,
+				"user defined functions cannot reference other user defined functions")
+		}
 		funcElts := b.QueryByID(id)
 		funcName := funcElts.FilterFunctionName().MustGetOneElement()
 		schemaParent := funcElts.FilterSchemaChild().MustGetOneElement()

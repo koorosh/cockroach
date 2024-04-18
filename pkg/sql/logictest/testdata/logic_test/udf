@@ -134,9 +134,9 @@ SELECT oid, proname, pronamespace, proowner, prolang, proleakproof, proisstrict,
 FROM pg_catalog.pg_proc WHERE proname IN ('proc_f', 'proc_f_2')
 ORDER BY 1
 ----
-100118  proc_f    105  1546506610  14  false  false  false  v  1  20  20     {i}    NULL    f  SELECT 1;
-100119  proc_f    105  1546506610  14  true   true   false  i  2  25  25 20  {i,i}  {"",b}  f  SELECT 'hello';
-100121  proc_f_2  120  1546506610  14  false  false  false  v  1  25  25     {i}    NULL    f  SELECT 'hello';
+100118  proc_f    105  1546506610  14  false  false  false  v  1  20  20     NULL  NULL    f  SELECT 1;
+100119  proc_f    105  1546506610  14  true   true   false  i  2  25  25 20  NULL  {"",b}  f  SELECT 'hello';
+100121  proc_f_2  120  1546506610  14  false  false  false  v  1  25  25     NULL  NULL    f  SELECT 'hello';
 
 # Ensure that the pg_proc virtual index works properly.
 
@@ -226,7 +226,6 @@ CREATE FUNCTION f_test_cor(a INT, b INT) RETURNS INT IMMUTABLE LEAKPROOF STRICT 
 statement error pgcode 42723 pq: function "f_test_cor" already exists with same argument types
 CREATE FUNCTION f_test_cor(a INT, b INT) RETURNS INT IMMUTABLE LANGUAGE SQL AS $$ SELECT 1 $$;
 
-skipif config local-mixed-23.1
 statement error pgcode 42809 cannot change routine kind\nDETAIL: "f_test_cor" is a function
 CREATE OR REPLACE PROCEDURE f_test_cor(a INT, b INT) LANGUAGE SQL AS $$ SELECT 2 $$;
 
@@ -780,11 +779,124 @@ FROM purchase
 1.00   BHD
 10.00  GBP
 
-subtest end
+subtest regression_113186
 
 statement ok
 CREATE FUNCTION f113186() RETURNS RECORD AS $$ SELECT 1.99; $$ LANGUAGE SQL;
 
-# Until #113186 is resolved, the internal error is expected.
-statement error pgcode XX000 internal error: invalid datum type given: DECIMAL, expected INT8
+query I
 SELECT * FROM f113186() AS foo(x INT);
+----
+2
+
+# Test type-coercion rules for composite return types.
+subtest return_tuple
+
+statement ok
+CREATE TYPE one_typ AS (x INT);
+CREATE TYPE two_typ AS (x INT, y INT);
+
+# Test a function returning a composite type with one element.
+statement ok
+DROP FUNCTION f;
+CREATE FUNCTION f() RETURNS one_typ LANGUAGE SQL AS $$ SELECT 1; $$;
+
+query T
+SELECT f();
+----
+(1)
+
+query I
+SELECT * FROM f();
+----
+1
+
+statement ok
+DROP FUNCTION f;
+CREATE FUNCTION f() RETURNS one_typ LANGUAGE SQL AS $$ SELECT ROW(1); $$;
+
+query T
+SELECT f();
+----
+(1)
+
+query I
+SELECT * FROM f();
+----
+1
+
+statement ok
+DROP FUNCTION f;
+
+statement error pgcode 42P13 pq: return type mismatch in function declared to return one_typ
+CREATE FUNCTION f() RETURNS one_typ LANGUAGE SQL AS $$ SELECT ROW(ROW(1)); $$;
+
+# Test a function returning a composite type with two elements.
+statement ok
+CREATE FUNCTION f() RETURNS two_typ LANGUAGE SQL AS $$ SELECT 1, 2; $$;
+
+query T
+SELECT f();
+----
+(1,2)
+
+query II
+SELECT * FROM f();
+----
+1  2
+
+statement ok
+DROP FUNCTION f;
+CREATE FUNCTION f() RETURNS two_typ LANGUAGE SQL AS $$ SELECT ROW(1, 2); $$;
+
+query T
+SELECT f();
+----
+(1,2)
+
+query II
+SELECT * FROM f();
+----
+1  2
+
+statement ok
+DROP FUNCTION f;
+
+statement error pgcode 42P13 pq: return type mismatch in function declared to return two_typ
+CREATE FUNCTION f() RETURNS two_typ LANGUAGE SQL AS $$ SELECT ROW(ROW(1, 2)); $$;
+
+# Test a function with two OUT-parameters.
+statement ok
+CREATE FUNCTION f(OUT x INT, OUT y INT) LANGUAGE SQL AS $$ SELECT 1, 2; $$;
+
+query T
+SELECT f();
+----
+(1,2)
+
+query II
+SELECT * FROM f();
+----
+1  2
+
+statement ok
+DROP FUNCTION f;
+CREATE FUNCTION f(OUT x INT, OUT y INT) LANGUAGE SQL AS $$ SELECT ROW(1, 2); $$;
+
+query T
+SELECT f();
+----
+(1,2)
+
+query II
+SELECT * FROM f();
+----
+1  2
+
+statement ok
+DROP FUNCTION f;
+
+statement error pgcode 42P13 pq: return type mismatch in function declared to return record
+CREATE FUNCTION f(OUT x INT, OUT y INT) LANGUAGE SQL AS $$ SELECT ROW(ROW(1, 2)); $$;
+
+subtest end

@@ -21,7 +21,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/storage/fs"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
-	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/stretchr/testify/require"
 )
@@ -97,18 +96,16 @@ func TestSetMinVersion(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
-	st := cluster.MakeClusterSettings()
 	p, err := Open(context.Background(), InMemory(), cluster.MakeClusterSettings(), CacheSize(0))
 	require.NoError(t, err)
 	defer p.Close()
-	require.Equal(t, pebble.FormatFlushableIngest, p.db.FormatMajorVersion())
+	require.Equal(t, MinimumSupportedFormatVersion, p.db.FormatMajorVersion())
 
-	ValueBlocksEnabled.Override(context.Background(), &st.SV, true)
 	// Advancing the store cluster version to one that supports a new feature
 	// should also advance the store's format major version.
-	err = p.SetMinVersion(clusterversion.V23_2_PebbleFormatDeleteSizedAndObsolete.Version())
+	err = p.SetMinVersion(clusterversion.Latest.Version())
 	require.NoError(t, err)
-	require.Equal(t, pebble.FormatDeleteSizedAndObsolete, p.db.FormatMajorVersion())
+	require.Equal(t, pebbleFormatVersion(clusterversion.Latest.Version()), p.db.FormatMajorVersion())
 }
 
 func TestMinVersion_IsNotEncrypted(t *testing.T) {
@@ -127,7 +124,7 @@ func TestMinVersion_IsNotEncrypted(t *testing.T) {
 	baseFS := vfs.NewMem()
 	env, err := fs.InitEnv(ctx, baseFS, "", fs.EnvConfig{
 		EncryptionOptions: []byte("foo"),
-	})
+	}, nil /* statsCollector */)
 	require.NoError(t, err)
 
 	p, err := Open(ctx, env, st)
@@ -160,8 +157,8 @@ type fauxEncryptedFS struct {
 	vfs.FS
 }
 
-func (fs fauxEncryptedFS) Create(path string) (vfs.File, error) {
-	f, err := fs.FS.Create(path)
+func (fs fauxEncryptedFS) Create(path string, category vfs.DiskWriteCategory) (vfs.File, error) {
+	f, err := fs.FS.Create(path, category)
 	if err != nil {
 		return nil, err
 	}

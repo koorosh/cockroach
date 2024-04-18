@@ -14,6 +14,8 @@ import (
 	"context"
 	gosql "database/sql"
 	"fmt"
+	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,7 +46,6 @@ type tpcc struct {
 	nowString        []byte
 	numConns         int
 	idleConns        int
-	isoLevel         string
 	txnRetries       bool
 
 	// Used in non-uniform random data generation. cLoad is the value of C at load
@@ -60,7 +61,6 @@ type tpcc struct {
 	// deprecatedFKIndexes adds in foreign key indexes that are no longer needed
 	// due to origin index restrictions being lifted.
 	deprecatedFkIndexes bool
-	dbOverride          string
 
 	txInfos []txInfo
 	// deck contains indexes into the txInfos slice.
@@ -92,6 +92,8 @@ type tpcc struct {
 	expensiveChecks bool
 
 	replicateStaticColumns bool
+
+	queryTraceFile string
 
 	randomCIDsCache struct {
 		syncutil.Mutex
@@ -139,6 +141,51 @@ func (w *waitSetter) String() string {
 	}
 }
 
+var _ pgx.QueryTracer = fileLoggerQueryTracer{}
+
+type fileLoggerQueryTracer struct {
+	file *os.File
+}
+
+func newFileLoggerQueryTracer(filePath string) (*fileLoggerQueryTracer, error) {
+	tracer := &fileLoggerQueryTracer{}
+	file, err := os.OpenFile(filePath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0666)
+	if err != nil {
+		return nil, err
+	}
+	tracer.file = file
+	return tracer, nil
+}
+
+func (t *fileLoggerQueryTracer) Close() error {
+	return errors.CombineErrors(
+		errors.Wrap(t.file.Sync(), "failed to sync query trace file"),
+		errors.Wrap(t.file.Close(), "failed to close query trace file"),
+	)
+}
+
+func (t fileLoggerQueryTracer) Write(p []byte) (n int, err error) {
+	return t.file.Write(p)
+}
+
+func (t fileLoggerQueryTracer) TraceQueryStart(
+	ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData,
+) context.Context {
+	whitespacePattern := regexp.MustCompile(`\s+`)
+	fmt.Fprintf(t, "Query: %s\n", whitespacePattern.ReplaceAllString(strings.TrimSpace(data.SQL), " "))
+	return ctx
+}
+
+func (t fileLoggerQueryTracer) TraceQueryEnd(
+	ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryEndData,
+) {
+	if data.Err == nil {
+		fmt.Fprintf(t, "CommandTag: %s\n", data.CommandTag.String())
+	} else {
+		fmt.Fprintf(t, "Error: %s\n", data.Err)
+	}
+}
+
 func init() {
 	workload.Register(tpccMeta)
 }
@@ -172,7 +219,6 @@ var tpccMeta = workload.Meta{
 			`workers`:                  {RuntimeOnly: true},
 			`conns`:                    {RuntimeOnly: true},
 			`idle-conns`:               {RuntimeOnly: true},
-			`isolation-level`:          {RuntimeOnly: true},
 			`txn-retries`:              {RuntimeOnly: true},
 			`expensive-checks`:         {RuntimeOnly: true, CheckConsistencyOnly: true},
 			`local-warehouses`:         {RuntimeOnly: true},
@@ -180,6 +226,7 @@ var tpccMeta = workload.Meta{
 			`survival-goal`:            {RuntimeOnly: true},
 			`replicate-static-columns`: {RuntimeOnly: true},
 			`deprecated-fk-indexes`:    {RuntimeOnly: true},
+			`query-trace-file`:         {RuntimeOnly: true},
 		}
 
 		g.flags.IntVar(&g.warehouses, `warehouses`, 1, `Number of warehouses for loading`)
@@ -191,8 +238,6 @@ var tpccMeta = workload.Meta{
 			`Weights for the transaction mix. The default matches the TPCC spec.`)
 		g.waitFraction = 1.0
 		g.flags.Var(&waitSetter{&g.waitFraction}, `wait`, `Wait mode (include think/keying sleeps): 1/true for tpcc-standard wait, 0/false for no waits, other factors also allowed`)
-		g.flags.StringVar(&g.dbOverride, `db`, ``,
-			`Override for the SQL database to use. If empty, defaults to the generator name`)
 		g.flags.IntVar(&g.workers, `workers`, 0, fmt.Sprintf(
 			`Number of concurrent workers. Defaults to --warehouses * %d`, NumWorkersPerWarehouse,
 		))
@@ -201,7 +246,6 @@ var tpccMeta = workload.Meta{
 			numConnsPerWarehouse,
 		))
 		g.flags.IntVar(&g.idleConns, `idle-conns`, 0, `Number of idle connections. Defaults to 0`)
-		g.flags.StringVar(&g.isoLevel, `isolation-level`, ``, `Isolation level to run workload transactions under [serializable, snapshot, read_committed]. If unset, the workload will run with the default isolation level of the database.`)
 		g.flags.BoolVar(&g.txnRetries, `txn-retries`, true, `Run transactions in a retry loop`)
 		g.flags.IntVar(&g.partitions, `partitions`, 1, `Partition tables`)
 		g.flags.IntVar(&g.clientPartitions, `client-partitions`, 0, `Make client behave as if the tables are partitioned, but does not actually partition underlying data. Requires --partition-affinity.`)
@@ -219,6 +263,7 @@ var tpccMeta = workload.Meta{
 		g.flags.BoolVar(&g.separateColumnFamilies, `families`, false, `Use separate column families for dynamic and static columns`)
 		g.flags.BoolVar(&g.replicateStaticColumns, `replicate-static-columns`, false, "Create duplicate indexes for all static columns in district, items and warehouse tables, such that each zone or rack has them locally.")
 		g.flags.BoolVar(&g.localWarehouses, `local-warehouses`, false, `Force transactions to use a local warehouse in all cases (in violation of the TPC-C specification)`)
+		g.flags.StringVar(&g.queryTraceFile, `query-trace-file`, ``, `File to write the query traces to. Defaults to no output`)
 		RandomSeed.AddFlag(&g.flags)
 		g.connFlags = workload.NewConnFlags(&g.flags)
 
@@ -259,6 +304,9 @@ func (*tpcc) Meta() workload.Meta { return tpccMeta }
 
 // Flags implements the Flagser interface.
 func (w *tpcc) Flags() workload.Flags { return w.flags }
+
+// ConnFlags implements the ConnFlagser interface.
+func (w *tpcc) ConnFlags() *workload.ConnFlags { return w.connFlags }
 
 // Hooks implements the Hookser interface.
 func (w *tpcc) Hooks() workload.Hooks {
@@ -341,6 +389,10 @@ func (w *tpcc) Hooks() workload.Hooks {
 			if w.waitFraction > 0 && w.workers != w.activeWarehouses*NumWorkersPerWarehouse {
 				return errors.Errorf(`--wait > 0 and --warehouses=%d requires --workers=%d`,
 					w.activeWarehouses, w.warehouses*NumWorkersPerWarehouse)
+			}
+
+			if w.queryTraceFile != `` && w.workers != 1 {
+				return errors.Errorf(`--query-trace-file must be used with exactly one worker`)
 			}
 
 			w.auditor = newAuditor(w.activeWarehouses)
@@ -746,14 +798,6 @@ func (w *tpcc) Ops(
 		w.txCounters = setupTPCCMetrics(reg.Registerer())
 	}
 
-	sqlDatabase, err := workload.SanitizeUrls(w, w.dbOverride, urls)
-	if err != nil {
-		return workload.QueryLoad{}, err
-	}
-	if err := workload.SetDefaultIsolationLevel(urls, w.isoLevel); err != nil {
-		return workload.QueryLoad{}, err
-	}
-
 	// We can't use a single MultiConnPool because we want to implement partition
 	// affinity. Instead we have one MultiConnPool per server.
 	cfg := workload.NewMultiConnPoolCfgFromFlags(w.connFlags)
@@ -763,6 +807,17 @@ func (w *tpcc) Ops(
 	// startup can be slow).
 	cfg.MaxConnsPerPool = w.connFlags.Concurrency
 	fmt.Printf("Initializing %d connections...\n", w.numConns)
+
+	// Set up the query tracer.
+	var tracer *fileLoggerQueryTracer
+	if w.queryTraceFile != `` {
+		var err error
+		tracer, err = newFileLoggerQueryTracer(w.queryTraceFile)
+		if err != nil {
+			return workload.QueryLoad{}, err
+		}
+		cfg.QueryTracer = tracer
+	}
 
 	dbs := make([]*workload.MultiConnPool, len(urls))
 	var g errgroup.Group
@@ -830,7 +885,7 @@ func (w *tpcc) Ops(
 		}
 	}
 	fmt.Printf("Initializing %d workers and preparing statements...\n", w.workers)
-	ql := workload.QueryLoad{SQLDatabase: sqlDatabase}
+	ql := workload.QueryLoad{}
 	ql.WorkerFns = make([]func(context.Context) error, 0, w.workers)
 	var group errgroup.Group
 
@@ -893,6 +948,11 @@ func (w *tpcc) Ops(
 	ql.Close = func(context context.Context) error {
 		for _, conn := range conns {
 			if err := conn.Close(ctx); err != nil {
+				log.Warningf(ctx, "%v", err)
+			}
+		}
+		if tracer != nil {
+			if err := tracer.Close(); err != nil {
 				log.Warningf(ctx, "%v", err)
 			}
 		}

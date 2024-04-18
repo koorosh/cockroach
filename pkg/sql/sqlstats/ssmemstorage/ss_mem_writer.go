@@ -173,7 +173,7 @@ func (s *Container) RecordStatement(
 
 	if created {
 		// stats size + stmtKey size + hash of the statementKey
-		estimatedMemoryAllocBytes := stats.sizeUnsafe() + statementKey.size() + 8
+		estimatedMemoryAllocBytes := stats.sizeUnsafeLocked() + statementKey.size() + 8
 
 		// We also account for the memory used for s.sampledPlanMetadataCache.
 		// timestamp size + key size + hash.
@@ -319,7 +319,7 @@ func (s *Container) RecordTransaction(
 	// fingerprints for this app. We also abort the operation and return an error.
 	if created {
 		estimatedMemAllocBytes :=
-			stats.sizeUnsafe() + key.Size() + 8 /* hash of transaction key */
+			stats.sizeUnsafeLocked() + key.Size() + 8 /* hash of transaction key */
 		if err := func() error {
 			s.mu.Lock()
 			defer s.mu.Unlock()

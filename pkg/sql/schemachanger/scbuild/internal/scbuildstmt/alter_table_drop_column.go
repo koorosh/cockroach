@@ -15,6 +15,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/clusterversion"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/catpb"
+	"github.com/cockroachdb/cockroach/pkg/sql/catalog/colinfo"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/descpb"
 	"github.com/cockroachdb/cockroach/pkg/sql/parser"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
@@ -157,7 +158,10 @@ func resolveColumnForDropColumn(
 	})
 	var colTargetStatus scpb.TargetStatus
 	_, colTargetStatus, col = scpb.FindColumn(elts)
-	if col == nil || colTargetStatus == scpb.ToAbsent {
+	if col != nil && colTargetStatus == scpb.ToAbsent {
+		panic(colinfo.NewUndefinedColumnError(n.Column.String()))
+	}
+	if col == nil {
 		if !n.IfExists {
 			panic(errors.AssertionFailedf("failed to find column %v in %v which was already resolved",
 				n.Column, tn))
@@ -276,7 +280,7 @@ func dropColumn(
 		case *scpb.UniqueWithoutIndexConstraint:
 			// Until the appropriate version gate is hit, we still do not allow
 			// dropping unique without index constraints.
-			if !b.ClusterSettings().Version.IsActive(b, clusterversion.V23_1) {
+			if !b.ClusterSettings().Version.IsActive(b, clusterversion.TODODelete_V23_1) {
 				panic(scerrors.NotImplementedErrorf(nil, "dropping without"+
 					"index constraints is not allowed."))
 			}
@@ -290,7 +294,7 @@ func dropColumn(
 		case *scpb.UniqueWithoutIndexConstraintUnvalidated:
 			// Until the appropriate version gate is hit, we still do not allow
 			// dropping unique without index constraints.
-			if !b.ClusterSettings().Version.IsActive(b, clusterversion.V23_1) {
+			if !b.ClusterSettings().Version.IsActive(b, clusterversion.TODODelete_V23_1) {
 				panic(scerrors.NotImplementedErrorf(nil, "dropping without"+
 					"index constraints is not allowed."))
 			}

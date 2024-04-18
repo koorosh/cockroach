@@ -1,5 +1,3 @@
-# LogicTest: !local-mixed-23.1
-
 subtest types
 
 statement error pgcode 42601 pq: at or near "float": syntax error
@@ -501,12 +499,11 @@ CREATE TYPE typ AS (a INT, b INT);
 statement ok
 CREATE PROCEDURE p_udt(OUT typ) AS $$ SELECT (1, 2); $$ LANGUAGE SQL;
 
-# TODO(120942): this currently results in an internal error.
-# query T colnames
-# CALL p_udt(NULL);
-# ----
-# column1
-# (1,2)
+query T colnames
+CALL p_udt(NULL);
+----
+column1
+(1,2)
 
 statement error pgcode 2BP01 cannot drop type "typ" because other objects \(\[test.public.p_udt\]\) still depend on it
 DROP TYPE typ;
@@ -575,6 +572,12 @@ CREATE OR REPLACE PROCEDURE my_sum(OUT INT, a INT, b INT, c INT = 3) LANGUAGE SQ
 statement error pgcode 22P02 could not parse "a" as type int
 CREATE OR REPLACE PROCEDURE my_sum(OUT INT, a INT = 'a', b INT DEFAULT 2, c INT = 3) LANGUAGE SQL AS $$ SELECT a + b + c; $$;
 
+statement error pgcode 0A000 subqueries are not allowed in DEFAULT expressions
+CREATE OR REPLACE PROCEDURE my_sum(a INT, b INT DEFAULT (SELECT 1)) LANGUAGE SQL AS $$ SELECT a + b; $$;
+
+statement error pgcode 0A000 subqueries are not allowed in DEFAULT expressions
+CREATE OR REPLACE PROCEDURE my_sum(a INT, b INT DEFAULT 1 + (SELECT 2 FROM (VALUES (NULL)))) LANGUAGE SQL AS $$ SELECT a + b; $$;
+
 query I
 CALL my_sum(NULL, 1);
 ----
@@ -634,35 +637,43 @@ DROP PROCEDURE f;
 statement ok
 CREATE FUNCTION f1(a INT, b INT = 2) RETURNS INT LANGUAGE SQL AS $$ SELECT a + b; $$;
 
+skipif config local-mixed-23.2
 statement ok
 CREATE PROCEDURE p2(OUT INT, a INT, b INT = f1(1)) LANGUAGE SQL AS $$ SELECT a + b; $$;
 
+skipif config local-mixed-23.2
 query I
 CALL p2(NULL, 1);
 ----
 4
 
+skipif config local-mixed-23.2
 query I
 CALL p2(NULL, 1, 1);
 ----
 2
 
+skipif config local-mixed-23.2
 statement ok
 CREATE OR REPLACE FUNCTION f1(a INT, b INT = 2) RETURNS INT LANGUAGE SQL AS $$ SELECT a * b; $$;
 
+skipif config local-mixed-23.2
 query I
 CALL p2(NULL, 1);
 ----
 3
 
+skipif config local-mixed-23.2
 query I
 CALL p2(NULL, 1, 1);
 ----
 2
 
+skipif config local-mixed-23.2
 statement error pgcode 2BP01 cannot drop function "f1" because other objects \(\[test.public.p2\]\) still depend on it
 DROP FUNCTION f1;
 
+skipif config local-mixed-23.2
 statement ok
 DROP PROCEDURE p2;
 

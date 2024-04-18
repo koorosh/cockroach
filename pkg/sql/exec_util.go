@@ -1878,6 +1878,7 @@ func getPlanDistribution(
 	txnHasUncommittedTypes bool,
 	distSQLMode sessiondatapb.DistSQLExecMode,
 	plan planMaybePhysical,
+	distSQLVisitor *distSQLExprCheckVisitor,
 ) physicalplan.PlanDistribution {
 	if plan.isPhysicalPlan() {
 		return plan.physPlan.Distribution
@@ -1899,7 +1900,7 @@ func getPlanDistribution(
 		return physicalplan.LocalPlan
 	}
 
-	rec, err := checkSupportForPlanNode(plan.planNode)
+	rec, err := checkSupportForPlanNode(plan.planNode, distSQLVisitor)
 	if err != nil {
 		// Don't use distSQL for this request.
 		log.VEventf(ctx, 1, "query not supported for distSQL: %s", err)
@@ -3746,6 +3747,10 @@ func (m *sessionDataMutator) SetPLpgSQLUseStrictInto(val bool) {
 
 func (m *sessionDataMutator) SetOptimizerUseVirtualComputedColumnStats(val bool) {
 	m.data.OptimizerUseVirtualComputedColumnStats = val
+}
+
+func (m *sessionDataMutator) SetOptimizerUseTrigramSimilarityOptimization(val bool) {
+	m.data.OptimizerUseTrigramSimilarityOptimization = val
 }
 
 // Utility functions related to scrubbing sensitive information on SQL Stats.

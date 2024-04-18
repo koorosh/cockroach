@@ -302,14 +302,17 @@ func NewTempContainerFromExistingTxnStats(
 		if currentAppName := statistics[i].StatsData.App; currentAppName != appName {
 			return container, statistics[i:], nil
 		}
-		txnStats, _, throttled :=
-			container.getStatsForTxnWithKeyLocked(
-				statistics[i].StatsData.TransactionFingerprintID,
-				statistics[i].StatsData.StatementFingerprintIDs,
-				true /* createIfNonexistent */)
+		// Since we just created the container and haven't exposed it yet, we
+		// don't need to take a lock on it.
+		txnStats, _, throttled := container.getStatsForTxnWithKeyLocked(
+			statistics[i].StatsData.TransactionFingerprintID,
+			statistics[i].StatsData.StatementFingerprintIDs,
+			true /* createIfNonexistent */)
 		if throttled {
 			return nil /* container */, nil /* remaining */, ErrFingerprintLimitReached
 		}
+		// No need for a lock here given that we're the only ones who has access
+		// to this txnStats object.
 		txnStats.mu.data.Add(&statistics[i].StatsData.Stats)
 	}
 
@@ -344,7 +347,8 @@ type txnStats struct {
 	}
 }
 
-func (t *txnStats) sizeUnsafe() int64 {
+func (t *txnStats) sizeUnsafeLocked() int64 {
+	t.mu.AssertHeld()
 	const txnStatsShallowSize = int64(unsafe.Sizeof(txnStats{}))
 	stmtFingerprintIDsSize := int64(cap(t.statementFingerprintIDs)) *
 		int64(unsafe.Sizeof(appstatspb.StmtFingerprintID(0)))
@@ -396,7 +400,7 @@ type stmtStats struct {
 	}
 }
 
-func (s *stmtStats) sizeUnsafe() int64 {
+func (s *stmtStats) sizeUnsafeLocked() int64 {
 	const stmtStatsShallowSize = int64(unsafe.Sizeof(stmtStats{}))
 	databaseNameSize := int64(len(s.mu.database))
 
@@ -641,11 +645,17 @@ func (s *Container) PopAllStats(
 		})
 	}
 
-	for key, txnStats := range txns {
+	for key, txn := range txns {
+		var stats appstatspb.TransactionStatistics
+		func() {
+			txn.mu.Lock()
+			defer txn.mu.Unlock()
+			stats = txn.mu.data
+		}()
 		transactionStats = append(transactionStats, &appstatspb.CollectedTransactionStatistics{
-			StatementFingerprintIDs:  txnStats.statementFingerprintIDs,
+			StatementFingerprintIDs:  txn.statementFingerprintIDs,
 			App:                      s.appName,
-			Stats:                    txnStats.mu.data,
+			Stats:                    stats,
 			TransactionFingerprintID: key,
 		})
 	}
@@ -822,7 +832,7 @@ func (s *Container) Add(ctx context.Context, other *Container) (err error) {
 			// If we created a new entry for the fingerprint, we check if we have
 			// exceeded our memory budget.
 			if created {
-				estimatedAllocBytes := stats.sizeUnsafe() + k.size() + 8 /* stmtKey hash */
+				estimatedAllocBytes := stats.sizeUnsafeLocked() + k.size() + 8 /* stmtKey hash */
 				// We still want to continue this loop to merge stats that are already
 				// present in our map that do not require allocation.
 				if latestErr := func() error {
@@ -892,7 +902,7 @@ func (s *Container) Add(ctx context.Context, other *Container) (err error) {
 			defer t.mu.Unlock()
 
 			if created {
-				estimatedAllocBytes := t.sizeUnsafe() + k.Size() + 8 /* TransactionFingerprintID hash */
+				estimatedAllocBytes := t.sizeUnsafeLocked() + k.Size() + 8 /* TransactionFingerprintID hash */
 				// We still want to continue this loop to merge stats that are already
 				// present in our map that do not require allocation.
 				if latestErr := func() error {

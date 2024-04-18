@@ -33,12 +33,13 @@ go_test(
         "zcfg_test.go",
     ],
     exec_properties = select({
-        "//build/toolchains:is_heavy": {"test.Pool": "large"},
+        "//build/toolchains:is_heavy": {"test.Pool": "heavy"},
         "//conditions:default": {"test.Pool": "default"},
     }),
     shard_count = 8,
     deps = [
         "//pkg/base",
+        "//pkg/ccl",
         "//pkg/ccl/streamingccl",
         "//pkg/config/zonepb",
         "//pkg/jobs",

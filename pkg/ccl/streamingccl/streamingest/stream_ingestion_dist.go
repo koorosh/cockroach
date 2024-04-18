@@ -73,12 +73,15 @@ func startDistIngestion(
 	if streamProgress.InitialRevertRequired {
 		updateRunningStatus(ctx, ingestionJob, jobspb.InitializingReplication, "reverting existing data to prepare for replication")
 
-		log.Infof(ctx, "reverting tenant %s to time %s before starting replication", details.DestinationTenantID, replicatedTime)
+		revertTo := replicatedTime
+		revertTo.Forward(streamProgress.InitialRevertTo)
+
+		log.Infof(ctx, "reverting tenant %s to time %s (via %s) before starting replication", details.DestinationTenantID, replicatedTime, revertTo)
 
 		spanToRevert := keys.MakeTenantSpan(details.DestinationTenantID)
 		if err := revertccl.RevertSpansFanout(ctx, execCtx.ExecCfg().DB, execCtx,
 			[]roachpb.Span{spanToRevert},
-			replicatedTime,
+			revertTo,
 			false, /* ignoreGCThreshold */
 			revertccl.RevertDefaultBatchSize,
 			nil, /* onCompletedCallback */
@@ -370,13 +373,23 @@ func createInitialSplits(
 	return grp.Wait()
 }
 
+// Spans are filled from left to right during the initial scan. Each might cover
+// many (10-100+) source ranges merged to a single span by PartitionSpans, that
+// could take multiple minutes to fill, so a span later in spans might be filled
+// until minutes or hours later than one earlier in spans. Thus we want to give
+// later splits longer enforcement times as we know that they may not be filled
+// for longer, and we do not want them being merged away before we fill them.
+const baseSplitExpiration = time.Hour * 6
+const extraExpirationPerSpan = time.Minute * 10
+const maxSplitExpiration = time.Hour * 24 * 7
+
 func splitAndScatterWorker(
 	spans []roachpb.Span, rekeyer *backupccl.KeyRewriter, splitter splitAndScatterer,
 ) func(ctx context.Context) error {
 	return func(ctx context.Context) error {
-		for _, span := range spans {
+		for spanNum, span := range spans {
 			startKey := span.Key.Clone()
-			splitKey, _, err := rekeyer.RewriteKey(startKey, 0 /* walltimeForImportElision */)
+			splitKey, _, err := rekeyer.RewriteTenant(startKey)
 			if err != nil {
 				return err
 			}
@@ -402,7 +415,8 @@ func splitAndScatterWorker(
 			// 	splitKey = newSplitKey
 			// }
 			//
-			if err := splitAndScatter(ctx, splitKey, splitter); err != nil {
+			addedExpiration := time.Duration(spanNum) * extraExpirationPerSpan
+			if err := splitAndScatter(ctx, splitKey, splitter, addedExpiration); err != nil {
 				return err
 			}
 
@@ -411,13 +425,11 @@ func splitAndScatterWorker(
 	}
 }
 
-var splitAndScatterSitckyBitDuration = time.Hour
-
 func splitAndScatter(
-	ctx context.Context, splitAndScatterKey roachpb.Key, s splitAndScatterer,
+	ctx context.Context, splitAndScatterKey roachpb.Key, s splitAndScatterer, extra time.Duration,
 ) error {
 	log.VInfof(ctx, 1, "splitting and scattering at %s", splitAndScatterKey)
-	expirationTime := s.now().AddDuration(splitAndScatterSitckyBitDuration)
+	expirationTime := s.now().AddDuration(min(baseSplitExpiration+extra, maxSplitExpiration))
 	if err := s.split(ctx, splitAndScatterKey, expirationTime); err != nil {
 		return err
 	}

@@ -271,14 +271,6 @@ func (c *CustomFuncs) splitScanIntoUnionScansOrSelects(
 	// If OptSplitScanLimit is below maxScanCount, we will decrease maxScanCount
 	// to that value because a hard limit should never be lower than a soft limit.
 	hardMaxScanCount := int(c.e.evalCtx.SessionData().OptSplitScanLimit)
-	// Hack: If OptSplitScanLimit is set to 0, it may be because it is
-	// uninitialized for an internal SQL execution. Set it to the old maximum of
-	// 16 to ensure there are no regressions.
-	if hardMaxScanCount == 0 {
-		// TODO(msirek): Remove this code once the following PR ships:
-		//   https://github.com/cockroachdb/cockroach/pull/73267
-		hardMaxScanCount = 16
-	}
 	if hardMaxScanCount < maxScanCount {
 		maxScanCount = hardMaxScanCount
 	}
@@ -656,21 +648,22 @@ func (c *CustomFuncs) makeNewScanPrivate(
 // constraints. getKnownScanConstraint assumes that the scan is not inverted.
 func (c *CustomFuncs) getKnownScanConstraint(
 	sp *memo.ScanPrivate,
-) (cons *constraint.Constraint, found bool) {
+) (_ *constraint.Constraint, found bool) {
 	if sp.Constraint != nil {
 		// The ScanPrivate has a constraint, so return it.
-		cons = sp.Constraint
-	} else {
-		// Build a constraint set with the check constraints of the underlying
-		// table.
-		filters := c.checkConstraintFilters(sp.Table)
-		instance := c.initIdxConstraintForIndex(
-			nil, /* requiredFilters */
-			filters,
-			sp.Table,
-			sp.Index,
-		)
-		cons = instance.Constraint()
+		return sp.Constraint, !sp.Constraint.IsUnconstrained()
 	}
-	return cons, !cons.IsUnconstrained()
+
+	// Build a constraint set with the check constraints of the underlying
+	// table.
+	filters := c.checkConstraintFilters(sp.Table)
+	instance := c.initIdxConstraintForIndex(
+		nil, /* requiredFilters */
+		filters,
+		sp.Table,
+		sp.Index,
+	)
+	var cons constraint.Constraint
+	instance.Constraint(&cons)
+	return &cons, !cons.IsUnconstrained()
 }

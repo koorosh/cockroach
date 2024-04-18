@@ -750,22 +750,11 @@ func (g *lockTableGuardImpl) IsKeyLockedByConflictingTxn(
 			break
 		}
 		if qqg.guard.txnMeta() != nil && g.isSameTxn(qqg.guard.txnMeta()) {
-			// A SKIP LOCKED request should not find another waiting request from its
-			// own transaction, at least not in the way that SQL uses KV. The only way
-			// we can end up finding another request in the lock's wait queue from our
-			// own transaction is if we're a replay.  We could handle this case by
-			// treating it as a non-conflict, but doing so expands the testing surface
-			// area -- we would want to include tests for:
-			// 1. Just our own request in the wait queue, treated as a non-conflict.
-			// 2. A request from a different transaction in the wait queue, with a
-			// lower sequence number, that conflicts.
-			// 3. A request from a different transaction in the wait queue, with a
-			// higher sequence number, that conflicts.
-			// 4. A request from a different transaction in the wait queue, with a
-			// lower sequence number, that does not conflict.
-			// For now, we simply return an error, and mark it for the benefit of
-			// KVNemesis.
-			return false, nil, MarkSkipLockedReplayError(errors.Errorf("SKIP LOCKED request should not find another waiting request from the same transaction"))
+			// Normally, in the way SQL uses KV, a SKIP LOCKED request should never
+			// find another request from its own transaction in a lock's wait queue.
+			// However, this is possible in case there is a replay involved. We handle
+			// this by treating the request as non-conflicting.
+			continue
 		}
 		if lock.Conflicts(qqg.mode, makeLockMode(str, g.txnMeta(), g.ts), &g.lt.settings.SV) {
 			return true, nil, nil // the conflict isn't with a lock holder, nil is returned
@@ -2294,27 +2283,6 @@ func (kl *keyLocks) isLocked() bool {
 	return kl.holders.Len() != 0
 }
 
-// clearLockHeldBy removes the lock, if held, by the transaction referenced by
-// the supplied ID. It is a no-op if the lock isn't held by the transaction.
-//
-// A boolean indicating whether the lock was held by the transaction or not is
-// also returned.
-//
-// TODO(arul): this method may leave the requests' notion of isPromoting in an
-// incorrect state. As such, it shouldn't be called directly -- replace all
-// usages with releaseLock, and pull this into a closure there instead.
-//
-// REQUIRES: kl.mu to be locked.
-func (kl *keyLocks) clearLockHeldBy(ID uuid.UUID) bool {
-	e, held := kl.heldBy[ID]
-	if !held {
-		return false // nothing to do
-	}
-	kl.holders.Remove(e)
-	delete(kl.heldBy, ID)
-	return true
-}
-
 func (kl *keyLocks) clearAllLockHolders() {
 	kl.holders.Init()
 	kl.heldBy = nil
@@ -2324,29 +2292,32 @@ func (kl *keyLocks) clearAllLockHolders() {
 //
 // REQUIRES: kl.mu to be locked.
 func (kl *keyLocks) releaseLock(txn *enginepb.TxnMeta) {
-	cleared := kl.clearLockHeldBy(txn.ID)
-	if cleared {
-		// There may be requests in the wait queue that belong to the supplied
-		// transaction. They were considered promoters while the lock was held, but
-		// that's no longer the case. As such, their queueOrder.isPromoting flag is
-		// incorrect, and so is their spot in the lock's wait queue. We can fix this
-		// in two different ways:
-		// 1. Recompute queueOrder.isPromoting for waiting requests that belong to
-		// the transaction that just released its lock and then reorder the wait
-		// queue (if needed).
-		// 2. Release any locking requests that belong to the transaction that just
-		// released its lock. They'll re-scan, re-determine whether they're
-		// promoting or not, and be inserted in the correct spot.
-		//
-		// We choose option 2.
-		//
-		// TODO(arul): Option 1, where we push this complexity into
-		// recomputeWaitQueues, is better. We should switch to that, and in doing
-		// so, get rid of all calls to releaseLockingRequestsFromTxn and replace
-		// them with recomputeWaitQueues. Notably, this includes the call to that
-		// method in the lock acquisition path as well.
-		kl.releaseLockingRequestsFromTxn(txn)
+	e, held := kl.heldBy[txn.ID]
+	if !held {
+		return // nothing to do
 	}
+	kl.holders.Remove(e)
+	delete(kl.heldBy, txn.ID)
+	// There may be requests in the wait queue that belong to the supplied
+	// transaction. They were considered promoters while the lock was held, but
+	// that's no longer the case. As such, their queueOrder.isPromoting flag is
+	// incorrect, and so is their spot in the lock's wait queue. We can fix this
+	// in two different ways:
+	// 1. Recompute queueOrder.isPromoting for waiting requests that belong to the
+	// transaction that just released its lock and then reorder the wait queue (if
+	// needed).
+	// 2. Release any locking requests that belong to the transaction that just
+	// released its lock. They'll re-scan, re-determine whether they're promoting
+	// or not, and be inserted in the correct spot.
+	//
+	// We choose option 2.
+	//
+	// TODO(arul): Option 1, where we push this complexity into
+	// recomputeWaitQueues, is better. We should switch to that, and in doing
+	// so, get rid of all calls to releaseLockingRequestsFromTxn and replace
+	// them with recomputeWaitQueues. Notably, this includes the call to that
+	// method in the lock acquisition path as well.
+	kl.releaseLockingRequestsFromTxn(txn)
 }
 
 // lockAcquiredOrDiscovered is called when the supplied lock is successfully
@@ -3619,8 +3590,7 @@ func (kl *keyLocks) tryFreeLockOnReplicatedAcquire(
 		return false /* freed */, false /* mustGC */
 	}
 
-	// TODO(arul): this should call releaseLock as well.
-	kl.clearLockHeldBy(acq.Txn.ID)
+	kl.releaseLock(&acq.Txn)
 	if kl.isLocked() {
 		return true /* freed */, false /* mustGC */
 	}
@@ -3923,8 +3893,7 @@ func (kl *keyLocks) verify(st *cluster.Settings) error {
 		//}
 	}
 
-	// TODO(arul): renumber.
-	// 5. Assert some invariants around the queuedLockingRequests wait queue if
+	// 4. Assert some invariants around the queuedLockingRequests wait queue if
 	// the lock isn't held.
 	if !kl.isLocked() {
 		if kl.queuedLockingRequests.Len() > 0 {
@@ -3943,7 +3912,7 @@ func (kl *keyLocks) verify(st *cluster.Settings) error {
 		}
 	}
 
-	// 6. Verify the waiting state on each of the waiters.
+	// 5. Verify the waiting state on each of the waiters.
 	for e := kl.waitingReaders.Front(); e != nil; e = e.Next() {
 		claimantTxn, _ := kl.claimantTxnFor(e.Value)
 		e.Value.mu.Lock()
@@ -3972,6 +3941,23 @@ func (kl *keyLocks) verify(st *cluster.Settings) error {
 			return errors.AssertionFailedf("mismatch between claimant txn ID and waiting state txn ID")
 		}
 		e.Value.guard.mu.Unlock()
+	}
+
+	// 6. Verify the lock promotion state for each of the waiters is copacetic.
+	for e := kl.queuedLockingRequests.Front(); e != nil; e = e.Next() {
+		// Handle non-transactional requests first. They should never consider
+		// themselves promoting.
+		if e.Value.guard.txn == nil {
+			if e.Value.order.isPromoting {
+				return errors.AssertionFailedf("non-locking transactions can't promote their locks")
+			}
+			continue // we're good
+		}
+		// Otherwise, requests that consider themselves promoters should hold locks,
+		// and requests that don't shouldn't.
+		if _, held := kl.heldBy[e.Value.guard.txnMeta().ID]; held != e.Value.order.isPromoting {
+			return errors.AssertionFailedf("mismatched notion of promoting and lock held status")
+		}
 	}
 
 	return nil
@@ -4677,9 +4663,12 @@ func (t *lockTableImpl) verifyKey(key roachpb.Key) {
 		return // no locks exist on this key
 	}
 	l := iter.Cur()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if err := l.verify(t.settings); err != nil {
+	err := func() error {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.verify(t.settings)
+	}()
+	if err != nil {
 		panic(fmt.Sprintf(
 			"error verifying key %s; lock table %s\nerror: %v", key, t.stringRLocked(), err,
 		))
@@ -4711,22 +4700,4 @@ func MarkLockPromotionError(cause error) error {
 		return nil
 	}
 	return errors.Mark(cause, &LockPromotionError{})
-}
-
-// SkipLockedReplayError is used to mark errors resulting from replayed SKIP
-// LOCKED requests that discover other requests from their own transactions in
-// a lock's wait queue. We mark such errors for the benefit of KVNemesis.
-type SkipLockedReplayError struct{}
-
-func (e *SkipLockedReplayError) Error() string {
-	return "skip locked replay error"
-}
-
-// MarkSkipLockedReplayError wraps the given error, if non-nil, as a skip locked
-// replay error.
-func MarkSkipLockedReplayError(cause error) error {
-	if cause == nil {
-		return nil
-	}
-	return errors.Mark(cause, &SkipLockedReplayError{})
 }

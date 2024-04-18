@@ -38,6 +38,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/storage"
+	"github.com/cockroachdb/cockroach/pkg/storage/fs"
 	"github.com/cockroachdb/cockroach/pkg/util"
 	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
 	"github.com/cockroachdb/cockroach/pkg/util/envutil"
@@ -1207,12 +1208,6 @@ type asyncReady struct {
 	// It is not required to consume or store SoftState.
 	*raft.SoftState
 
-	// ReadStates can be used for node to serve linearizable read requests locally
-	// when its applied index is greater than the index in ReadState.
-	// Note that the readState will be returned when raft receives msgReadIndex.
-	// The returned is only valid for the request that requested to read.
-	ReadStates []raft.ReadState
-
 	// Messages specifies outbound messages to other peers and to local storage
 	// threads. These messages can be sent in any order.
 	//
@@ -1224,9 +1219,8 @@ type asyncReady struct {
 // makeAsyncReady constructs an asyncReady from the provided Ready.
 func makeAsyncReady(rd raft.Ready) asyncReady {
 	return asyncReady{
-		SoftState:  rd.SoftState,
-		ReadStates: rd.ReadStates,
-		Messages:   rd.Messages,
+		SoftState: rd.SoftState,
+		Messages:  rd.Messages,
 	}
 }
 
@@ -2653,7 +2647,7 @@ func handleTruncatedStateBelowRaftPreApply(
 		prefixBuf.RaftTruncatedStateKey(),
 		hlc.Timestamp{},
 		suggestedTruncatedState,
-		storage.MVCCWriteOptions{Category: storage.ReplicationReadCategory},
+		storage.MVCCWriteOptions{Category: fs.ReplicationReadCategory},
 	); err != nil {
 		return false, errors.Wrap(err, "unable to write RaftTruncatedState")
 	}

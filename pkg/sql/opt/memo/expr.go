@@ -705,13 +705,19 @@ type UDFDefinition struct {
 	CalledOnNullInput bool
 
 	// MultiColDataSource is true if the function may return multiple columns.
-	// This is only the case if the UDF returns a RECORD type and is used as a
+	// This is only the case if the UDF returns a composite type and is used as a
 	// data source.
 	MultiColDataSource bool
 
-	// IsRecursive indicates whether the UDF recursively calls itself. This
+	// IsRecursive indicates whether the routine recursively calls itself. This
 	// applies to direct as well as indirect recursive calls (mutual recursion).
 	IsRecursive bool
+
+	// BlockStart indicates whether the routine marks the start of a PL/pgSQL
+	// block with an exception handler. This is used to determine when to
+	// initialize the common state held between sub-routines within the same
+	// block.
+	BlockStart bool
 
 	// RoutineType indicates whether this routine is a UDF, stored procedure, or
 	// builtin function.
@@ -844,7 +850,7 @@ func (s *ScanPrivate) IsUnfiltered(md *opt.Metadata) bool {
 
 // IsFullIndexScan returns true if the ScanPrivate will produce all rows in the
 // index.
-func (s *ScanPrivate) IsFullIndexScan(md *opt.Metadata) bool {
+func (s *ScanPrivate) IsFullIndexScan() bool {
 	return (s.Constraint == nil || s.Constraint.IsUnconstrained()) &&
 		s.InvertedConstraint == nil &&
 		s.HardLimit == 0
@@ -852,8 +858,8 @@ func (s *ScanPrivate) IsFullIndexScan(md *opt.Metadata) bool {
 
 // IsInvertedScan returns true if the index being scanned is an inverted
 // index.
-func (s *ScanPrivate) IsInvertedScan() bool {
-	return s.InvertedConstraint != nil
+func (s *ScanPrivate) IsInvertedScan(md *opt.Metadata) bool {
+	return md.Table(s.Table).Index(s.Index).IsInverted()
 }
 
 // IsVirtualTable returns true if the table being scanned is a virtual table.
